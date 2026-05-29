@@ -1,6 +1,6 @@
 # aur_bump
 
-GitHub action that runs weekly and does the following:
+GitHub workflow that runs weekly and does the following:
 
 - Fetches all AUR packages from specific maintainer.
 - Clones every pkg, then fetches the current upstream pkg version with `nvchecker`

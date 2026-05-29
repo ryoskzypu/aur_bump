@@ -1,0 +1,59 @@
+name: AUR package update checker
+
+on:
+  schedule:
+    - cron: '0 0 * * Sun'  # Weekly at midnight UTC.
+
+  workflow_dispatch:
+
+jobs:
+  fetch-packages:
+    runs-on: ubuntu-latest
+
+    outputs:
+      packages: ${{ steps.fetch.outputs.packages }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - name: Fetch AUR packages from maintainer
+        id: matrix
+        run: |
+          packages=$(
+              perl -MHTTP::Tiny -MJSON::PP -E '
+                  my $MAINTAINER = 'ryoskzypu';
+
+                  my $res = HTTP::Tiny->new->get("https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer");
+                  die "Failed to fetch AUR\n" unless $res->{success};
+
+                  if ( length $response->{content} ) {
+                      my $json = decode_json( $res->{content} );
+
+                      die "No packages found from $MAINTAINER\n"
+                        unless scalar $json->{results}->@*;
+
+                      my @pkgs;
+                      push @pkgs, $_->{Name} foreach $json->{results}->@*;
+
+                      my $matrix = encode_json \@pkgs;
+                      print $matrix;
+                  }
+              '
+          )
+          printf 'packages=%s\n' "$packages" >> $GITHUB_OUTPUT
+          printf '%s\n' "Found packages: $packages"
+
+  check-packages:
+    needs: fetch-packages
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.fetch-packages.outputs.matrix) }}
+
+      max-parallel: 5
+
+    steps:
+      - name: Print package ${{ matrix.package }}
+        id: print
+        run: |
+          echo ${{ matrix.package }}
