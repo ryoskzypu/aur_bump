@@ -57,6 +57,11 @@ jobs:
       max-parallel: 5
 
     steps:
+      - name: 'Install dependencies'
+        run: |
+          sudo apt update
+          sudo apt install -y libio-socket-ssl-perl
+
       - name: Print package ${{ matrix.package }}
         id: print
         run: |
