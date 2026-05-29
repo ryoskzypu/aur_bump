@@ -1,4 +1,4 @@
-name: AUR package update checker
+name: 'AUR package update checker'
 
 on:
   schedule:
@@ -15,7 +15,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
 
     steps:
-      - name: Fetch AUR packages from maintainer
+      - name: 'Fetch AUR packages from maintainer'
         id: matrix
         run: |
           packages=$(
@@ -25,7 +25,7 @@ jobs:
                   my $res = HTTP::Tiny->new->get("https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer");
                   die "Failed to fetch AUR\n" unless $res->{success};
 
-                  if ( length $response->{content} ) {
+                  if ( length $res->{content} ) {
                       my $json = decode_json( $res->{content} );
 
                       die "No packages found from $MAINTAINER\n"
@@ -36,6 +36,9 @@ jobs:
 
                       my $matrix = encode_json \@pkgs;
                       print $matrix;
+                  }
+                  else {
+                    die "No response content\n";
                   }
               '
           )
