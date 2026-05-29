@@ -67,6 +67,7 @@ jobs:
           sudo apt install -y makepkg nvchecker jq
 
       - name: Check package version
+        continue-on-error: true
         shell: bash
         run: |
           package=${{ matrix.package }}
@@ -75,11 +76,20 @@ jobs:
           git clone https://aur@aur.archlinux.org/"$package".git
           cd "$package" || exit 1
 
-          # Based on 'pkgctl version check' (/usr/share/devtools/lib/version/check.sh)
+          config=.nvchecker.toml
+
+          for file in "$config" PKGBUILD; do
+              if [[ ! -f $file ]]; then
+                  printf '%s\n' "$file does not exist" >&2
+                  exit 1
+              fi
+          done
+
+          # Based on 'pkgctl version check' (/usr/share/devtools/lib/version/check.sh).
 
           set -o pipefail
 
-          # Reset common PKGBUILD variables.
+          # Reset common PKGBUILD vars.
           unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
 
           # Extract version from PKGBUILD.
@@ -89,7 +99,7 @@ jobs:
           # Get upstream version using nvchecker.
           if upstream_version=$(
               nvchecker \
-                  --file .nvchecker.toml \
+                  --file "$config" \
                   --logger=json \
                   2> /dev/null \
               | jq \
