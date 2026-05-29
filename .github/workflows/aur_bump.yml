@@ -17,10 +17,11 @@ jobs:
     steps:
       - name: 'Fetch AUR packages from maintainer'
         id: matrix
+        shell: bash
         run: |
           packages=$(
               perl -MHTTP::Tiny -MJSON::PP -E '
-                  my $MAINTAINER = 'ryoskzypu';
+                  my $MAINTAINER = q{ryoskzypu};
 
                   my $res = HTTP::Tiny->new->get("https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer");
                   die "Failed to fetch AUR\n" unless $res->{success};
