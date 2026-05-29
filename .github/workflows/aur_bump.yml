@@ -64,7 +64,7 @@ jobs:
       - name: 'Install dependencies'
         run: |
           sudo apt update
-          sudo apt install -y makepkg jq
+          sudo apt install -y makepkg nvchecker jq
 
       - name: Check package version
         shell: bash
