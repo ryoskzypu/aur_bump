@@ -61,7 +61,63 @@ jobs:
       max-parallel: 5
 
     steps:
-      - name: Print package ${{ matrix.package }}
-        id: print
+      - name: 'Install dependencies'
         run: |
-          echo ${{ matrix.package }}
+          sudo apt update
+          sudo apt install -y makepkg jq
+
+      - name: Check package version
+        shell: bash
+        run: |
+          package=${{ matrix.package }}
+          printf '%s\n' "Checking $package version"
+
+          git clone https://aur@aur.archlinux.org/"$package".git
+          cd "$package" || exit 1
+
+          # Based on 'pkgctl version check' (/usr/share/devtools/lib/version/check.sh)
+
+          set -o pipefail
+
+          # Reset common PKGBUILD variables.
+          unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
+
+          # Extract version from PKGBUILD.
+          source ./PKGBUILD
+          pkgbase=${pkgbase:-$pkgname}
+
+          # Get upstream version using nvchecker.
+          if upstream_version=$(
+              nvchecker \
+                  --file .nvchecker.toml \
+                  --logger=json \
+                  --failures \
+                  2> /dev/null \
+              | jq \
+                  --raw-output \
+                  --exit-status \
+                  'select(.name == "'"$pkgbase"'") | .version' \
+                  2> /dev/null
+          )
+          then
+              if [[ -n $upstream_version && $upstream_version != 'null' ]]; then
+                  if ! result=$(vercmp "$upstream_version" "$pkgver"); then
+                      printf '%s\n' "$pkgbase: failed to compare version $upstream_version against $pkgver" >&2
+                      exit 1
+                  fi
+
+                  if (( result == 0 )); then
+                      printf '%s\n' "$pkgbase: current version $pkgver is latest"
+                  elif (( result < 0 )); then
+                      printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+                  elif (( result > 0 )); then
+                      printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+                  fi
+              else
+                  printf '%s\n' "$pkgbase: failed to get upstream version" >&2
+                  exit 1
+              fi
+          else
+              printf '%s\n' "$pkgbase: nvchecker failed to fetch upstream version" >&2
+              exit 1
+          fi
