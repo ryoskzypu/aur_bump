@@ -61,10 +61,16 @@ jobs:
       max-parallel: 5
 
     steps:
-      - name: 'Install dependencies'
-        run: |
-          sudo apt update
-          sudo apt install -y makepkg nvchecker jq
+      #- name: 'Install dependencies'
+      #  run: |
+      #    sudo apt update
+      #    sudo apt install -y makepkg nvchecker jq
+
+      - name: 'Cache apt packages'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: makepkg nvchecker jq
+          version: 1.0
 
       - name: Check package version
         continue-on-error: true
@@ -119,8 +125,10 @@ jobs:
                       printf '%s\n' "$pkgbase: current version $pkgver is latest"
                   elif (( result < 0 )); then
                       printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+                      exit 1
                   elif (( result > 0 )); then
                       printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+                      exit 1
                   fi
               else
                   printf '%s\n' "$pkgbase: failed to get upstream version" >&2
