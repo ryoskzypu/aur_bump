@@ -75,6 +75,8 @@ jobs:
           git clone https://aur@aur.archlinux.org/"$package".git
           cd "$package" || exit 1
 
+          ls -la
+
           # Based on 'pkgctl version check' (/usr/share/devtools/lib/version/check.sh)
 
           set -o pipefail
@@ -85,6 +87,8 @@ jobs:
           # Extract version from PKGBUILD.
           source ./PKGBUILD
           pkgbase=${pkgbase:-$pkgname}
+          echo "$pkgbase"
+          echo "$pkgver"
 
           # Get upstream version using nvchecker.
           if upstream_version=$(
