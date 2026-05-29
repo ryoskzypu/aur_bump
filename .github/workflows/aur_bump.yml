@@ -58,18 +58,13 @@ jobs:
       matrix:
         package: ${{ fromJson(needs.fetch-packages.outputs.packages) }}
 
-      max-parallel: 5
+      max-parallel: 6
 
     steps:
-      #- name: 'Install dependencies'
-      #  run: |
-      #    sudo apt update
-      #    sudo apt install -y makepkg nvchecker jq
-
-      - name: 'Cache apt packages'
+      - name: 'Install + cache apt packages'
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: makepkg nvchecker jq
+          packages: makepkg nvchecker
           version: 1.0
 
       - name: Check package version
