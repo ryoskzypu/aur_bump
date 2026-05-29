@@ -12,7 +12,6 @@ jobs:
 
     outputs:
       packages: ${{ steps.fetch.outputs.packages }}
-      matrix: ${{ steps.matrix.outputs.matrix }}
 
     steps:
       - name: 'Install dependencies'
@@ -21,7 +20,7 @@ jobs:
           sudo apt install -y libio-socket-ssl-perl  # HTTP::Tiny TLS support
 
       - name: 'Fetch AUR packages from maintainer'
-        id: matrix
+        id: fetch
         shell: bash
         run: |
           packages=$(
@@ -57,7 +56,7 @@ jobs:
 
     strategy:
       matrix:
-        package: ${{ fromJson(needs.fetch-packages.outputs.matrix) }}
+        package: ${{ fromJson(needs.fetch-packages.outputs.packages) }}
 
       max-parallel: 5
 
