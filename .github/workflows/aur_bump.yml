@@ -39,7 +39,7 @@ jobs:
                       my @pkgs;
                       foreach my $pkg ( $json->{results}->@* ) {
                           push @pkgs, $pkg->{Name}
-                            if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs.
+                            if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs
                       }
 
                       my $matrix = encode_json \@pkgs;
@@ -53,8 +53,21 @@ jobs:
           printf 'packages=%s\n' "$packages" >> $GITHUB_OUTPUT
           printf '%s\n' "Found packages: $packages"
 
+  generate-token:
+    runs-on: ubuntu-latest
+    outputs:
+      token: ${{ steps.app-token.outputs.token }}
+
+    steps:
+      - name: 'Generate GitHub App token'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
   check-packages:
-    needs: fetch-packages
+    needs: [fetch-packages, generate-token]
     runs-on: ubuntu-latest
 
     strategy:
@@ -64,16 +77,25 @@ jobs:
       max-parallel: 6
 
     steps:
-      - name: 'Install + cache apt packages'
+      - name: 'Install + cache apt dependencies'
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: makepkg nvchecker
           version: 1.0
 
       - name: Check package version
-        continue-on-error: true
+        id: version-check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
         shell: bash
         run: |
+          # Based on 'pkgctl version check' and bumpbuddy.
+          # https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
+          # https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
+
+          set -o pipefail
+
           package=${{ matrix.package }}
           printf '%s\n' "Checking $package version"
 
@@ -82,24 +104,22 @@ jobs:
 
           config=.nvchecker.toml
 
-          for file in "$config" PKGBUILD; do
+          for file in PKGBUILD "$config"; do
               if [[ ! -f $file ]]; then
                   printf '%s\n' "$file does not exist" >&2
                   exit 1
               fi
           done
 
-          # Based on 'pkgctl version check'.
-          # https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
-
-          set -o pipefail
-
           # Reset common PKGBUILD vars.
           unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
 
-          # Extract version from PKGBUILD.
+          # Get PKGBUILD vars.
           source ./PKGBUILD
+
           pkgbase=${pkgbase:-$pkgname}
+          upstream_url=$url
+          package_url=https://aur.archlinux.org/packages/$pkgbase
 
           # Get upstream version using nvchecker.
           if upstream_version=$(
@@ -112,7 +132,7 @@ jobs:
                   --exit-status \
                   'select(.name == "'"$pkgbase"'") | .version' \
                   2> /dev/null
-          )
+              )
           then
               if [[ -n $upstream_version && $upstream_version != 'null' ]]; then
                   if ! result=$(vercmp "$upstream_version" "$pkgver"); then
@@ -120,15 +140,85 @@ jobs:
                       exit 1
                   fi
 
-                  if (( result == 0 )); then
-                      printf '%s\n' "$pkgbase: current version $pkgver is latest"
-                  elif (( result < 0 )); then
-                      printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
-                      exit 1
-                  elif (( result > 0 )); then
-                      printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+                  # Check if issue already exists.
+                  if ! issue=$(
+                      gh issue list \
+                          --search "author:aur-bump-bot '$pkgbase - new version: ' in:title" \
+                          --label 'package out-of-date' \
+                          --state open \
+                          --limit 1 \
+                          --json number \
+                          --jq '.[].number'
+                      )
+                  then
+                      printf '%s\n' "$pkgbase: failed to check issue for $pkgbase" >&2
                       exit 1
                   fi
+
+                  if (( result == 0 )); then
+                      printf '%s\n' "$pkgbase: current version $pkgver is latest"
+
+                      if [[ -n $issue ]]; then
+                          printf '%s\n' "$pkgbase: current version $pkgver is latest, closing existing issue #$issue"
+
+                          gh issue close "$issue" --comment "Current version $pkgver is latest, closing the issue."
+                      fi
+
+                  elif (( result < 0 )); then
+                      printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+                  elif (( result > 0 )); then
+                      printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+
+                      title="$pkgbase - new version: $upstream_version"
+                      body="pkgbase: $pkgbase
+          pkgver: $pkgver
+          upstream_version: $upstream_version
+          upstream_url: $upstream_url
+          package_url: $package_url"
+
+                      if [[ -n $issue ]]; then
+                          # Extract versions from existing issue.
+
+                          if ! existing_body=$(gh issue view "$issue" --json body --jq '.body'); then
+                              printf '%s\n' "$pkgbase: failed to fetch issue #$issue" >&2
+                              exit 1
+                          fi
+
+                          mapfile -t body_arr <<< "$existing_body"
+
+                          for i in "${body_arr[@]}"; do
+                              [[ $i = pkgver:* ]]           && existing_pkgver=${i#*: }
+                              [[ $i = upstream_version:* ]] && existing_upstream=${i#*: }
+                          done
+
+                          # Only update if versions have changed.
+                          if [[ $existing_pkgver != "$pkgver" || $existing_upstream != "$upstream_version" ]]; then
+                              printf '%s\n' "$pkgbase: updating issue #$issue with new versions"
+
+                              if ! gh issue edit \
+                                  "$issue" \
+                                  --title "$title" \
+                                  --body "$body"
+                              then
+                                  printf '%s\n' "$pkgbase: failed to update issue #$issue" >&2
+                                  exit 1
+                              fi
+                          else
+                              printf '%s\n' "$pkgbase: issue #$issue already has current version info"
+                          fi
+                      else
+                          printf '%s\n' "$pkgbase: creating issue"
+
+                          if ! gh issue create \
+                              --label 'package out-of-date' \
+                              --title "$title" \
+                              --body "$body"
+                          then
+                              printf '%s\n' "$pkgbase: failed to create issue #$issue" >&2
+                              exit 1
+                          fi
+                      fi
+                   fi
               else
                   printf '%s\n' "$pkgbase: failed to get upstream version" >&2
                   exit 1
