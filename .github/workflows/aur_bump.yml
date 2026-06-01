@@ -63,7 +63,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.APP_ID }}
+          client-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
   check-packages:
@@ -86,7 +86,7 @@ jobs:
       - name: Check package version
         id: version-check
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ needs.generate-token.outputs.token }}
 
         shell: bash
         run: |
