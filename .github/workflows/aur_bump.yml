@@ -137,6 +137,7 @@ jobs:
                   # Check if issue already exists.
                   if ! issue=$(
                       gh issue list \
+                          --repo ${{ github.repository }} \
                           --search "author:aur-bump-bot '$pkgbase - new version: ' in:title" \
                           --label 'package out-of-date' \
                           --state open \
@@ -155,7 +156,14 @@ jobs:
                       if [[ -n $issue ]]; then
                           printf '%s\n' "$pkgbase: current version $pkgver is latest, closing existing issue #$issue"
 
-                          gh issue close "$issue" --comment "Current version $pkgver is latest, closing the issue."
+                          if ! gh issue close \
+                              "$issue" \
+                              --repo ${{ github.repository }} \
+                              --comment "Current version $pkgver is latest, closing the issue."
+                          then
+                              printf '%s\n' "$pkgbase: failed to close issue #$issue" >&2
+                              exit 1
+                          fi
                       fi
 
                   elif (( result < 0 )); then
@@ -173,7 +181,14 @@ jobs:
                       if [[ -n $issue ]]; then
                           # Extract versions from existing issue.
 
-                          if ! existing_body=$(gh issue view "$issue" --json body --jq '.body'); then
+                          if ! existing_body=$(
+                              gh issue view \
+                                  "$issue" \
+                                  --repo ${{ github.repository }} \
+                                  --json body \
+                                  --jq '.body'
+                              )
+                          then
                               printf '%s\n' "$pkgbase: failed to fetch issue #$issue" >&2
                               exit 1
                           fi
@@ -191,6 +206,7 @@ jobs:
 
                               if ! gh issue edit \
                                   "$issue" \
+                                  --repo ${{ github.repository }} \
                                   --title "$title" \
                                   --body "$body"
                               then
@@ -204,6 +220,7 @@ jobs:
                           printf '%s\n' "$pkgbase: creating issue"
 
                           if ! gh issue create \
+                              --repo ${{ github.repository }} \
                               --label 'package out-of-date' \
                               --title "$title" \
                               --body "$body"
