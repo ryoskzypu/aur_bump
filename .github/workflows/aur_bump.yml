@@ -65,6 +65,7 @@ jobs:
         with:
           client-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          skip-token-revoke: true
 
   check-packages:
     needs: [fetch-packages, generate-token]
