@@ -84,7 +84,7 @@ jobs:
 
         shell: bash
         run: |
-          # Based on 'pkgctl version check' and bumpbuddy.
+          # Based on 'pkgctl version check' and Bumpbuddy.
           # https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
           # https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
 
