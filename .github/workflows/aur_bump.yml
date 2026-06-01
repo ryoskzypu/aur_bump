@@ -49,7 +49,7 @@ jobs:
                   print "Found packages: $matrix\n";
 
                   open my $out, ">>", $ENV{GITHUB_OUTPUT} or die $!;
-                  print $out $matrix, "\n";
+                  print $out "packages=$matrix\n";
                   close $out or die $!;
 
                   open my $summ, ">>", $ENV{GITHUB_STEP_SUMMARY} or die $!;
