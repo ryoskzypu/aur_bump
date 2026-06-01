@@ -19,47 +19,12 @@ jobs:
           sudo apt update
           sudo apt install -y libio-socket-ssl-perl  # HTTP::Tiny TLS support
 
+      - uses: actions/checkout@v6
       - name: 'Fetch AUR packages from maintainer'
         id: fetch
-        shell: bash
         run: |
-          perl -MHTTP::Tiny -MJSON::PP -E '
-              use strict;
-              use warnings;
-
-              my $MAINTAINER = q{ryoskzypu};
-
-              my $res = HTTP::Tiny->new->get("https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer");
-              die "Failed to fetch AUR\n" unless $res->{success};
-
-              if ( length $res->{content} ) {
-                  my $json = decode_json( $res->{content} );
-
-                  die "No packages found from $MAINTAINER\n"
-                    unless scalar $json->{results}->@*;
-
-                  my @pkgs;
-                  foreach my $pkg ( $json->{results}->@* ) {
-                      push @pkgs, $pkg->{Name}
-                        if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs
-                  }
-
-                  my $matrix = encode_json \@pkgs;
-
-                  print "Found packages: $matrix\n";
-
-                  open my $out, ">>", $ENV{GITHUB_OUTPUT} or die $!;
-                  print $out "packages=$matrix\n";
-                  close $out or die $!;
-
-                  open my $summ, ">>", $ENV{GITHUB_STEP_SUMMARY} or die $!;
-                  print $summ "- Found packages: $matrix\n";
-                  close $summ or die $!;
-              }
-              else {
-                die "No response content\n";
-              }
-          '
+          chmod +x fetch_pkgs
+          ./fetch_pkgs
 
   check-packages:
     needs: fetch-packages
