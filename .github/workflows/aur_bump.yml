@@ -138,7 +138,7 @@ jobs:
                   if ! issue=$(
                       gh issue list \
                           --repo ${{ github.repository }} \
-                          --search "author:aur-bump-bot '$pkgbase - new version: ' in:title" \
+                          --search "author:app/aur-bump-bot '$pkgbase - new version: ' in:title" \
                           --label 'package out-of-date' \
                           --state open \
                           --limit 1 \
