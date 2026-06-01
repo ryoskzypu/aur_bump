@@ -173,7 +173,7 @@ jobs:
                   exit 1
               fi
 
-              printf '%s\n' "- Updated issue #$issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
+              printf '%s\n' "- Updated $type issue #$issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
           }
 
           create_issue()
@@ -193,7 +193,7 @@ jobs:
                   exit 1
               fi
 
-              printf '%s\n' "- Created issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
+              printf '%s\n' "- Created $type issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
           }
 
           close_issue()
@@ -210,7 +210,7 @@ jobs:
                   exit 1
               fi
 
-              printf '%s\n' "- Closed issue #$issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
+              printf '%s\n' "- Closed $type issue #$issue for $pkgbase" >> $GITHUB_STEP_SUMMARY
           }
 
           # Get upstream version using nvchecker.
