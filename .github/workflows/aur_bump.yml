@@ -54,6 +54,7 @@ jobs:
       - name: 'Check package version'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PACKAGE_NAME: ${{ matrix.package }}
 
         shell: bash
         run: |

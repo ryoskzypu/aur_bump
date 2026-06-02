@@ -6,8 +6,8 @@
 
 set -o pipefail
 
-repo=${{ github.repository }}
-package=${{ matrix.package }}
+repo=$GITHUB_REPOSITORY
+package=$PACKAGE_NAME
 
 printf '%s\n' "Checking $package version"
 
