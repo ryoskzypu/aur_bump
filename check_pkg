@@ -216,7 +216,10 @@ check_package()
                         printf '%s\n' "$pkgbase: updating epoch issue #$issue_epoch with new versions"
                         edit_issue 'epoch' "$issue_epoch" "$title_epoch" "$body_epoch"
                     else
-                        printf '%s\n' "$pkgbase: epoch issue #$issue_epoch already has current version info"
+                        local same_epoch="issue #$issue_epoch already has current version info"
+
+                        printf '%s\n' "$pkgbase: epoch $same_epoch"
+                        printf '%s\n' "- Epoch $same_epoch" >> "$GITHUB_STEP_SUMMARY"
                     fi
                 else
                     printf '%s\n' "$pkgbase: creating epoch issue"
@@ -253,7 +256,10 @@ check_package()
                         printf '%s\n' "$pkgbase: updating out-of-date issue #$issue_ood with new versions"
                         edit_issue 'out-of-date' "$issue_ood" "$title_ood" "$body_ood"
                     else
-                        printf '%s\n' "$pkgbase: out-of-date issue #$issue_ood already has current version info"
+                        local same_ood="issue #$issue_ood already has current version info"
+
+                        printf '%s\n' "$pkgbase: out-of-date $same_ood"
+                        printf '%s\n' "- Out-of-date $same_ood" >> "$GITHUB_STEP_SUMMARY"
                     fi
                 else
                     printf '%s\n' "$pkgbase: creating out-of-date issue"
