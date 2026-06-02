@@ -1,0 +1,273 @@
+#!/bin/bash
+#
+# Based on 'pkgctl version check' and Bumpbuddy.
+# https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
+# https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
+
+set -o pipefail
+
+repo=${{ github.repository }}
+package=${{ matrix.package }}
+
+printf '%s\n' "Checking $package version"
+
+if ! git clone https://aur@aur.archlinux.org/"$package".git; then
+    printf '%s\n' "Failed to clone $package from AUR" >&2
+    exit 1
+fi
+
+cd "$package" || exit 1
+
+config=.nvchecker.toml
+
+for file in PKGBUILD "$config"; do
+    if [[ ! -f $file ]]; then
+        printf '%s\n' "$file does not exist" >&2
+        exit 1
+    fi
+done
+
+# Reset common PKGBUILD vars.
+unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
+
+# Get PKGBUILD vars.
+source ./PKGBUILD
+
+pkgbase=${pkgbase:-$pkgname}
+upstream_url=$url
+package_url=https://aur.archlinux.org/packages/$pkgbase
+
+list_issue()
+{
+    local type=$1
+    local search=$2
+    local label=$3
+
+    if ! gh issue list \
+        --repo "$repo" \
+        --search "author:app/aur-bump-bot '$search' in:title" \
+        --label "$label" \
+        --state open \
+        --limit 1 \
+        --json number \
+        --jq '.[].number'
+    then
+        printf '%s\n' "$pkgbase: failed to check $type issue for $pkgbase" >&2
+        exit 1
+    fi
+}
+
+view_issue()
+{
+    local type=$1
+    local issue=$2
+
+    if ! gh issue view \
+        "$issue" \
+        --repo "$repo" \
+        --json body \
+        --jq '.body'
+    then
+        printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
+        exit 1
+    fi
+}
+
+edit_issue()
+{
+    local type=$1
+    local issue=$2
+    local title=$3
+    local body=$4
+
+    if ! gh issue edit \
+        "$issue" \
+        --repo "$repo" \
+        --title "$title" \
+        --body "$body"
+    then
+        printf '%s\n' "$pkgbase: failed to update $type issue #$issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Updated $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+create_issue()
+{
+    local type=$1
+    local label=$2
+    local title=$3
+    local body=$4
+
+    if ! gh issue create \
+        --repo "$repo" \
+        --label "$label" \
+        --title "$title" \
+        --body "$body"
+    then
+        printf '%s\n' "$pkgbase: failed to create $type issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Created $type issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+close_issue()
+{
+    local type=$1
+    local issue=$2
+
+    if ! gh issue close \
+        "$issue" \
+        --repo "$repo" \
+        --comment "Current version $pkgver is latest, closing the issue."
+    then
+        printf '%s\n' "$pkgbase: failed to close $type issue #$issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Closed $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+check_package()
+{
+    # Get upstream version using nvchecker.
+    local upstream_version
+    if upstream_version=$(
+        nvchecker \
+            --file "$config" \
+            --logger=json \
+            2> /dev/null \
+        | jq \
+            --raw-output \
+            --exit-status \
+            'select(.name == "'"$pkgbase"'") | .version' \
+            2> /dev/null
+        )
+    then
+        if [[ -n $upstream_version && $upstream_version != 'null' ]]; then
+            local result
+            if ! result=$(vercmp "$upstream_version" "$pkgver"); then
+                printf '%s\n' "$pkgbase: failed to compare version $upstream_version against $pkgver" >&2
+                exit 1
+            fi
+
+            # Check if package out-of-date issue exists.
+            local issue_ood
+            local search_ood="$pkgbase - new version: "
+            local label_ood='package out-of-date'
+            issue_ood=$(list_issue 'out-of-date' "$search_ood" "$label_ood")
+
+            # Check if epoch mismatch issue exists.
+            local issue_epoch
+            local search_epoch="$pkgbase - version mismatch"
+            local label_epoch='package needs-epoch'
+            issue_epoch=$(list_issue 'epoch' "$search_epoch" "$label_epoch")
+
+            if (( result == 0 )); then
+                printf '%s\n' "$pkgbase: current version $pkgver is latest"
+
+                if [[ -n $issue_ood ]]; then
+                    printf '%s\n' "$pkgbase: closing existing issue #$issue_ood"
+                    close_issue 'out-of-date' "$issue_ood"
+                fi
+
+                if [[ -n $issue_epoch ]]; then
+                    printf '%s\n' "$pkgbase: closing existing issue #$issue_epoch"
+                    close_issue 'epoch' "$issue_epoch"
+                fi
+            elif (( result < 0 )); then
+                printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+
+                local title_epoch="$pkgbase - version mismatch"
+                local body_epoch
+                body_epoch=$(
+                    printf '%s\n'\
+                        "pkgbase: $pkgbase" \
+                        "pkgver: $pkgver" \
+                        "upstream_version: $upstream_version" \
+                        "upstream_url: $upstream_url" \
+                        "package_url: $package_url" \
+                        '' \
+                        '> [!NOTE]' \
+                        '> The pkgver version is newer than upstream, this means:' \
+                        '> - Upstream changed versioning schemes' \
+                        '> - nvchecker is pointing to the wrong source' \
+                        '> - An `epoch` bump is needed' \
+                        '>' \
+                        '> Since this breaks pacman'\''s version comparison logic, review *.nvchecker.toml* and consider adding/incrementing `epoch` in *PKGBUILD*.'
+                )
+
+                if [[ -n $issue_epoch ]]; then
+                    # Extract versions from existing epoch issue.
+
+                    local existing_body_epoch body_arr_epoch
+                    existing_body_epoch=$(view_issue 'epoch' "$issue_epoch")
+                    mapfile -t body_arr_epoch <<< "$existing_body_epoch"
+
+                    for i in "${body_arr_epoch[@]}"; do
+                        [[ $i = pkgver:* ]]           && local existing_pkgver_epoch=${i#*: }
+                        [[ $i = upstream_version:* ]] && local existing_upstream_epoch=${i#*: }
+                    done
+
+                    # Only update if versions have changed.
+                    if [[ $existing_pkgver_epoch != "$pkgver" || $existing_upstream_epoch != "$upstream_version" ]]; then
+                        printf '%s\n' "$pkgbase: updating epoch issue #$issue_epoch with new versions"
+                        edit_issue 'epoch' "$issue_epoch" "$title_epoch" "$body_epoch"
+                    else
+                        printf '%s\n' "$pkgbase: epoch issue #$issue_epoch already has current version info"
+                    fi
+                else
+                    printf '%s\n' "$pkgbase: creating epoch issue"
+                    create_issue 'epoch' 'package needs-epoch' "$title_epoch" "$body_epoch"
+                fi
+            elif (( result > 0 )); then
+                printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+
+                local title_ood="$pkgbase - new version: $upstream_version"
+                local body_ood
+                body_ood=$(
+                    printf '%s\n'\
+                        "pkgbase: $pkgbase" \
+                        "pkgver: $pkgver" \
+                        "upstream_version: $upstream_version" \
+                        "upstream_url: $upstream_url" \
+                        "package_url: $package_url"
+                )
+
+                if [[ -n $issue_ood ]]; then
+                    # Extract versions from existing out-of-date issue.
+
+                    local existing_body_ood body_arr_ood
+                    existing_body_ood=$(view_issue 'out-of-date' "$issue_ood")
+                    mapfile -t body_arr_ood <<< "$existing_body_ood"
+
+                    for i in "${body_arr_ood[@]}"; do
+                        [[ $i = pkgver:* ]]           && local existing_pkgver_ood=${i#*: }
+                        [[ $i = upstream_version:* ]] && local existing_upstream_ood=${i#*: }
+                    done
+
+                    # Only update if versions have changed.
+                    if [[ $existing_pkgver_ood != "$pkgver" || $existing_upstream_ood != "$upstream_version" ]]; then
+                        printf '%s\n' "$pkgbase: updating out-of-date issue #$issue_ood with new versions"
+                        edit_issue 'out-of-date' "$issue_ood" "$title_ood" "$body_ood"
+                    else
+                        printf '%s\n' "$pkgbase: out-of-date issue #$issue_ood already has current version info"
+                    fi
+                else
+                    printf '%s\n' "$pkgbase: creating out-of-date issue"
+                    create_issue 'out-of-date' 'package out-of-date' "$title_ood" "$body_ood"
+                fi
+             fi
+        else
+            printf '%s\n' "$pkgbase: failed to get upstream version" >&2
+            exit 1
+        fi
+    else
+        printf '%s\n' "$pkgbase: nvchecker failed to fetch upstream version" >&2
+        exit 1
+    fi
+}
+
+check_package
