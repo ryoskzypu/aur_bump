@@ -211,8 +211,8 @@ check_package()
             if (( result == 0 )); then
                 printf '%s\n' "$pkgbase: current version $pkgver is latest"
 
-                [[ -n $issue_ood ]]   && close_issue "$type_ood" "$issue_ood"
-                [[ -n $issue_epoch ]] && close_issue "$type_epoch" "$issue_epoch"
+                [[ -z $issue_ood ]]   || close_issue "$type_ood" "$issue_ood"
+                [[ -z $issue_epoch ]] || close_issue "$type_epoch" "$issue_epoch"
             elif (( result < 0 )); then
                 printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
 
