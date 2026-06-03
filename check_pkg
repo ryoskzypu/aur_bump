@@ -80,6 +80,8 @@ edit_issue()
     local title=$3
     local body=$4
 
+    printf '%s\n' "$pkgbase: updating $type issue #$issue with new versions"
+
     if ! gh issue edit \
         "$issue" \
         --repo "$repo" \
@@ -100,6 +102,8 @@ create_issue()
     local title=$3
     local body=$4
 
+    printf '%s\n' "$pkgbase: creating $type issue"
+
     if ! gh issue create \
         --repo "$repo" \
         --label "$label" \
@@ -118,6 +122,8 @@ close_issue()
     local type=$1
     local issue=$2
 
+    printf '%s\n' "$pkgbase: closing existing issue #$issue"
+
     if ! gh issue close \
         "$issue" \
         --repo "$repo" \
@@ -128,6 +134,41 @@ close_issue()
     fi
 
     printf '%s\n' "- Closed $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+update_or_create_issue()
+{
+    local type=$1
+    local issue=$2
+    local label=$3
+    local title=$4
+    local body=$5
+
+    if [[ -n $issue ]]; then
+        # Extract versions from existing issue type.
+
+        local existing_body body_arr
+        existing_body=$(view_issue 'epoch' "$issue")
+        mapfile -t body_arr <<< "$existing_body"
+
+        local i
+        for i in "${body_arr[@]}"; do
+            [[ $i = pkgver:* ]]           && local existing_pkgver=${i#*: }
+            [[ $i = upstream_version:* ]] && local existing_upstream=${i#*: }
+        done
+
+        # Only update if versions have changed.
+        if [[ $existing_pkgver != "$pkgver" || $existing_upstream != "$upstream_version" ]]; then
+            edit_issue "$type" "$issue" "$title" "$body"
+        else
+            local same_issue="issue #$issue already has current version info"
+
+            printf '%s\n' "$pkgbase: $type $same_issue"
+            printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
+        fi
+    else
+        create_issue "$type" "$label" "$title" "$body"
+    fi
 }
 
 check_package()
@@ -155,28 +196,23 @@ check_package()
 
             # Check if package out-of-date issue exists.
             local issue_ood
+            local type_ood=out-of-date
             local search_ood="$pkgbase - new version: "
             local label_ood='package out-of-date'
-            issue_ood=$(list_issue 'out-of-date' "$search_ood" "$label_ood")
+            issue_ood=$(list_issue "$type_ood" "$search_ood" "$label_ood")
 
-            # Check if epoch mismatch issue exists.
+            # Check if package epoch issue exists.
             local issue_epoch
+            local type_epoch=epoch
             local search_epoch="$pkgbase - version mismatch"
             local label_epoch='package needs-epoch'
-            issue_epoch=$(list_issue 'epoch' "$search_epoch" "$label_epoch")
+            issue_epoch=$(list_issue "$type_epoch" "$search_epoch" "$label_epoch")
 
             if (( result == 0 )); then
                 printf '%s\n' "$pkgbase: current version $pkgver is latest"
 
-                if [[ -n $issue_ood ]]; then
-                    printf '%s\n' "$pkgbase: closing existing issue #$issue_ood"
-                    close_issue 'out-of-date' "$issue_ood"
-                fi
-
-                if [[ -n $issue_epoch ]]; then
-                    printf '%s\n' "$pkgbase: closing existing issue #$issue_epoch"
-                    close_issue 'epoch' "$issue_epoch"
-                fi
+                [[ -n $issue_ood ]]   && close_issue "$type_ood" "$issue_ood"
+                [[ -n $issue_epoch ]] && close_issue "$type_epoch" "$issue_epoch"
             elif (( result < 0 )); then
                 printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
 
@@ -199,32 +235,7 @@ check_package()
                         '> Since this breaks pacman'\''s version comparison logic, review *.nvchecker.toml* and consider adding/incrementing `epoch` in *PKGBUILD*.'
                 )
 
-                if [[ -n $issue_epoch ]]; then
-                    # Extract versions from existing epoch issue.
-
-                    local existing_body_epoch body_arr_epoch
-                    existing_body_epoch=$(view_issue 'epoch' "$issue_epoch")
-                    mapfile -t body_arr_epoch <<< "$existing_body_epoch"
-
-                    for i in "${body_arr_epoch[@]}"; do
-                        [[ $i = pkgver:* ]]           && local existing_pkgver_epoch=${i#*: }
-                        [[ $i = upstream_version:* ]] && local existing_upstream_epoch=${i#*: }
-                    done
-
-                    # Only update if versions have changed.
-                    if [[ $existing_pkgver_epoch != "$pkgver" || $existing_upstream_epoch != "$upstream_version" ]]; then
-                        printf '%s\n' "$pkgbase: updating epoch issue #$issue_epoch with new versions"
-                        edit_issue 'epoch' "$issue_epoch" "$title_epoch" "$body_epoch"
-                    else
-                        local same_epoch="issue #$issue_epoch already has current version info"
-
-                        printf '%s\n' "$pkgbase: epoch $same_epoch"
-                        printf '%s\n' "- Epoch $same_epoch" >> "$GITHUB_STEP_SUMMARY"
-                    fi
-                else
-                    printf '%s\n' "$pkgbase: creating epoch issue"
-                    create_issue 'epoch' 'package needs-epoch' "$title_epoch" "$body_epoch"
-                fi
+                update_or_create_issue "$type_epoch" "$issue_epoch" "$label_epoch" "$title_epoch" "$body_epoch"
             elif (( result > 0 )); then
                 printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
 
@@ -239,32 +250,7 @@ check_package()
                         "package_url: $package_url"
                 )
 
-                if [[ -n $issue_ood ]]; then
-                    # Extract versions from existing out-of-date issue.
-
-                    local existing_body_ood body_arr_ood
-                    existing_body_ood=$(view_issue 'out-of-date' "$issue_ood")
-                    mapfile -t body_arr_ood <<< "$existing_body_ood"
-
-                    for i in "${body_arr_ood[@]}"; do
-                        [[ $i = pkgver:* ]]           && local existing_pkgver_ood=${i#*: }
-                        [[ $i = upstream_version:* ]] && local existing_upstream_ood=${i#*: }
-                    done
-
-                    # Only update if versions have changed.
-                    if [[ $existing_pkgver_ood != "$pkgver" || $existing_upstream_ood != "$upstream_version" ]]; then
-                        printf '%s\n' "$pkgbase: updating out-of-date issue #$issue_ood with new versions"
-                        edit_issue 'out-of-date' "$issue_ood" "$title_ood" "$body_ood"
-                    else
-                        local same_ood="issue #$issue_ood already has current version info"
-
-                        printf '%s\n' "$pkgbase: out-of-date $same_ood"
-                        printf '%s\n' "- Out-of-date $same_ood" >> "$GITHUB_STEP_SUMMARY"
-                    fi
-                else
-                    printf '%s\n' "$pkgbase: creating out-of-date issue"
-                    create_issue 'out-of-date' 'package out-of-date' "$title_ood" "$body_ood"
-                fi
+                update_or_create_issue "$type_ood" "$issue_ood" "$label_ood" "$title_ood" "$body_ood"
              fi
         else
             printf '%s\n' "$pkgbase: failed to get upstream version" >&2
