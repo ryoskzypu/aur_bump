@@ -25,11 +25,12 @@ if ( length $res->{content} ) {
           if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs
     }
 
-    my $matrix = encode_json \@pkgs;
+    my $pkgs_cnt = scalar @pkgs;
+    my $matrix   = encode_json \@pkgs;
 
     my $info = <<~"END";
         - Maintainer: $MAINTAINER
-        - Found packages: $matrix
+        - Found $pkgs_cnt packages: $matrix
         END
 
     print $info;
