@@ -265,6 +265,12 @@ check_pkg_version()
 # Create an issue informing the packager to submit a deletion request if the AUR
 # package already exists in the official repo, because a Package Maintainer could
 # create an existing AUR package without checking or never bother to delete it.
+#
+# TODO:
+#   To close resolved issues, maybe create a check outside the CI matrix which
+#   iterates through the 'duplicate' issues, then check every package from them
+#   to confirm if they still exist on AUR. But it isn't worth for now, since this
+#   problem seems to be rare.
 is_official_pkg()
 {
     # Check if package duplicate issue exists.
