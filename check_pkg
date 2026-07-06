@@ -310,12 +310,12 @@ is_official_pkg()
                 printf '%s\n'\
                     "pkgbase: $pkgbase" \
                     "pkgver: $pkgver" \
-                    "upstream_version: $upstream_version" \
+                    "upstream_version:" \
                     "upstream_url: $upstream_url" \
                     "package_url: $package_url" \
                     '' \
                     '> [!NOTE]' \
-                    "> $pkgbase already exists in the official repository, this means that a Package Maintainer created this package without checking or did not bother to delete it." \
+                    "> $pkgbase already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it." \
                     '>' \
                     '> Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).'
             )
