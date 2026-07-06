@@ -304,6 +304,11 @@ is_official_pkg()
         if jq --exit-status '.results | length > 0' > /dev/null <<< "$json"; then
             printf '%s\n' "$pkgbase: package exists in official repo"
 
+            local repo arch
+            repo=$(jq --raw-output '.results[0].repo' <<< "$json")
+            arch=$(jq --raw-output '.results[0].arch' <<< "$json")
+            local pkg_url=https://archlinux.org/packages/$repo/$arch/$package
+
             local title=$search
             local body
             body=$(
@@ -315,7 +320,7 @@ is_official_pkg()
                     "package_url: $package_url" \
                     '' \
                     '> [!NOTE]' \
-                    "> $pkgbase already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it." \
+                    "> [$pkgbase]($pkg_url) already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it." \
                     '>' \
                     '> Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).'
             )
