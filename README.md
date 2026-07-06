@@ -3,8 +3,8 @@
 GitHub workflow that runs weekly and does the following:
 
 - Fetches all AUR packages from specific maintainer.
-- Clones every package and fetches the current upstream package version with `nvchecker` to compare against *PKGBUILD*'s `pkgver`.
-- Creates/updates repo issues when packages are out-of-date or need `epoch`.
+- Clones every package, checks if they already exist in the official repo, and fetches the current upstream package version with `nvchecker` to compare against *PKGBUILD*'s `pkgver`.
+- Creates/updates repo issues when packages exist in the official repo, are out-of-date or need `epoch`.
 - Closes existing issues when packages are up-to-date.
 
 Based on Arch's [`pkgctl version check`](https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh)
