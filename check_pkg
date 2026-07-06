@@ -171,7 +171,7 @@ update_or_create_issue()
     fi
 }
 
-check_package()
+check_pkg_version()
 {
     # Get upstream version using nvchecker.
     local upstream_version
@@ -197,7 +197,7 @@ check_package()
             # Check if package out-of-date issue exists.
             local issue_ood
             local type_ood=out-of-date
-            local search_ood="$pkgbase - new version: "
+            local search_ood="$pkgbase - new version: $upstream_version"
             local label_ood='package out-of-date'
             issue_ood=$(list_issue "$type_ood" "$search_ood" "$label_ood")
 
@@ -216,7 +216,7 @@ check_package()
             elif (( result < 0 )); then
                 printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
 
-                local title_epoch="$pkgbase - version mismatch"
+                local title_epoch=$search_epoch
                 local body_epoch
                 body_epoch=$(
                     printf '%s\n'\
@@ -239,7 +239,7 @@ check_package()
             elif (( result > 0 )); then
                 printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
 
-                local title_ood="$pkgbase - new version: $upstream_version"
+                local title_ood=$search_ood
                 local body_ood
                 body_ood=$(
                     printf '%s\n'\
@@ -262,4 +262,65 @@ check_package()
     fi
 }
 
-check_package
+# Create an issue informing the packager to submit a deletion request if the AUR
+# package already exists in the official repo, because a Package Maintainer could
+# create an existing AUR package without checking or never bother to delete it.
+is_official_pkg()
+{
+    # Check if package duplicate issue exists.
+    local issue
+    local type=duplicate
+    local search="$pkgbase - exists in official repo"
+    local label='package duplicate'
+    issue=$(list_issue "$type" "$search" "$label")
+
+    if [[ -n $issue ]]; then
+        local same_issue="issue #$issue already exists"
+
+        printf '%s\n' "$pkgbase: $type $same_issue"
+        printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
+
+        exit 0
+    else
+        local json
+        if ! json=$(
+            curl \
+                --fail \
+                --silent \
+                --show-error \
+                "https://archlinux.org/packages/search/json/?name=$package"
+            )
+        then
+            printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
+            exit 1
+        fi
+
+        if jq --exit-status '.results | length > 0' > /dev/null <<< "$json"; then
+            printf '%s\n' "$pkgbase: package exists in official repo"
+
+            local title=$search
+            local body
+            body=$(
+                printf '%s\n'\
+                    "pkgbase: $pkgbase" \
+                    "pkgver: $pkgver" \
+                    "upstream_version: $upstream_version" \
+                    "upstream_url: $upstream_url" \
+                    "package_url: $package_url" \
+                    '' \
+                    '> [!NOTE]' \
+                    "> $pkgbase already exists in the official repository, this means that a Package Maintainer created this package without checking or did not bother to delete it." \
+                    '>' \
+                    '> Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).'
+            )
+
+            create_issue "$type" "$label" "$title" "$body"
+            exit 0
+        else
+            printf '%s\n' "$pkgbase: package does not exist in official repo"
+        fi
+    fi
+}
+
+is_official_pkg
+check_pkg_version
