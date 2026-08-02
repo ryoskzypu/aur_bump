@@ -197,7 +197,7 @@ check_pkg_version()
             # Check if package out-of-date issue exists.
             local issue_ood
             local type_ood=out-of-date
-            local search_ood="$pkgbase - new version: $upstream_version"
+            local search_ood="$pkgbase - new version: "
             local label_ood='package out-of-date'
             issue_ood=$(list_issue "$type_ood" "$search_ood" "$label_ood")
 
@@ -239,7 +239,7 @@ check_pkg_version()
             elif (( result > 0 )); then
                 printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
 
-                local title_ood=$search_ood
+                local title_ood=${search_ood}$upstream_version
                 local body_ood
                 body_ood=$(
                     printf '%s\n'\
