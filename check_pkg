@@ -11,7 +11,7 @@ package=$PACKAGE_NAME
 
 printf '%s\n' "Checking $package version"
 
-if ! git clone https://aur@aur.archlinux.org/"$package".git; then
+if ! git clone --ipv4 https://aur@aur.archlinux.org/"$package".git; then
     printf '%s\n' "Failed to clone $package from AUR" >&2
     exit 1
 fi
