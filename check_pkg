@@ -9,34 +9,6 @@ set -o pipefail
 repo=$GITHUB_REPOSITORY
 package=$PACKAGE_NAME
 
-printf '%s\n' "Checking $package version"
-
-if ! git clone --ipv4 https://aur@aur.archlinux.org/"$package".git; then
-    printf '%s\n' "Failed to clone $package from AUR" >&2
-    exit 1
-fi
-
-cd "$package" || exit 1
-
-config=.nvchecker.toml
-
-for file in PKGBUILD "$config"; do
-    if [[ ! -f $file ]]; then
-        printf '%s\n' "$file does not exist" >&2
-        exit 1
-    fi
-done
-
-# Reset common PKGBUILD vars.
-unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
-
-# Get PKGBUILD vars.
-source ./PKGBUILD
-
-pkgbase=${pkgbase:-$pkgname}
-upstream_url=$url
-package_url=https://aur.archlinux.org/packages/$pkgbase
-
 list_issue()
 {
     local type=$1
@@ -334,5 +306,50 @@ is_official_pkg()
     fi
 }
 
+source_pkgbuild ()
+{
+    cd "$package" || exit 1
+
+    config=.nvchecker.toml
+
+    for file in PKGBUILD "$config"; do
+        if [[ ! -f $file ]]; then
+            printf '%s\n' "$file does not exist" >&2
+            exit 1
+        fi
+    done
+
+    # Reset common PKGBUILD vars.
+    unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
+
+    # Get PKGBUILD vars.
+    source ./PKGBUILD
+
+    pkgbase=${pkgbase:-$pkgname}
+    upstream_url=$url
+    package_url=https://aur.archlinux.org/packages/$pkgbase
+}
+
+# Clone the GH mirror repo and fallback to AUR to reduce load in Arch servers
+# and avoid rate limiting.
+clone_pkg ()
+{
+    local gh=https://github.com/archlinux/aur
+    local aur=https://aur@aur.archlinux.org/
+
+    if ! git clone --single-branch --branch "$package" "${gh}".git; then
+        printf '%s\n' "Failed to clone $package from $gh" >&2
+
+        if ! git clone "${aur}$package".git; then
+            printf '%s\n' "Failed to clone $package from $aur" >&2
+            exit 1
+        fi
+    fi
+}
+
+printf '%s\n' "Checking $package version"
+
+clone_pkg
+source_pkgbuild
 is_official_pkg
 check_pkg_version
