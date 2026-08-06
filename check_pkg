@@ -337,7 +337,7 @@ clone_pkg ()
     local gh=https://github.com/archlinux/aur
     local aur=https://aur@aur.archlinux.org/
 
-    if ! git clone --single-branch --branch "$package" "${gh}".git; then
+    if ! git clone --single-branch --branch "$package" "${gh}".git "$package"; then
         printf '%s\n' "Failed to clone $package from $gh" >&2
 
         if ! git clone "${aur}$package".git; then
