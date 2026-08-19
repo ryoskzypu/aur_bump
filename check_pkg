@@ -290,6 +290,7 @@ sub is_official_pkg ()
         label  => 'package duplicate',
     );
     my $issue = list_issue(%dupe);
+    print "issue: $issue\n";
 
     if ( defined $issue && $issue ne '' ) {
         my $same_issue = "issue #$issue already exists";
@@ -303,6 +304,9 @@ sub is_official_pkg ()
     else {
         my $query = "https://archlinux.org/packages/search/json/?name=$package";
         my $resp  = HTTP::Tiny->new->get($query);
+        print "query: $query\n";
+        use Data::Dumper qw< Dumper >;
+        print Dumper $resp;
 
         err("failed to fetch $dupe{type} issue #$issue")
           unless $resp->{success};
@@ -388,6 +392,10 @@ sub parse_srcinfo ()
     $pkgver       = $srcinfo_meta{pkgver};
     $upstream_url = $srcinfo_meta{url};
     $package_url  = "https://aur.archlinux.org/packages/$pkgbase";
+    print "pkgbase: $pkgbase\n";
+    print "pkgver: $pkgver\n";
+    print "upstream_url: $upstream_url\n";
+    print "package_url: $package_url\n";
 }
 
 # Clone the GH mirror repo and fallback to AUR to reduce load in Arch servers
@@ -426,6 +434,8 @@ sub clone_pkg ()
 }
 
 print "Checking $package version\n";
+print "repo: $repo\n";
+print "package: $package\n";
 
 clone_pkg();
 parse_srcinfo();
