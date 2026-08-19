@@ -1,237 +1,273 @@
-#!/bin/bash
-#
-# Based on 'pkgctl version check' and Bumpbuddy.
-# https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
-# https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
+#!/usr/bin/perl
 
-set -o pipefail
+use v5.38.0;  # Current perl version from GH CI runner (Ubuntu 24.04LTS)
+use strict;
+use warnings;
 
-repo=$GITHUB_REPOSITORY
-package=$PACKAGE_NAME
+use List::Util qw< any >;
+use HTTP::Tiny;
+use JSON::PP qw< decode_json >;
 
-list_issue()
+my $repo    = $ENV{GITHUB_REPOSITORY};
+my $package = $ENV{PACKAGE_NAME};
+my $config;
+my $pkgbase;
+my $upstream_url;
+my $package_url;
+
+sub err ($msg)
 {
-    local type=$1
-    local search=$2
-    local label=$3
-
-    if ! gh issue list \
-        --repo "$repo" \
-        --search "author:app/aur-bump-bot '$search' in:title" \
-        --label "$label" \
-        --state open \
-        --limit 1 \
-        --json number \
-        --jq '.[].number'
-    then
-        printf '%s\n' "$pkgbase: failed to check $type issue for $pkgbase" >&2
-        exit 1
-    fi
+    warn "$pkgbase: $msg\n";
+    exit 1;
 }
 
-view_issue()
+sub info ($msg)
 {
-    local type=$1
-    local issue=$2
-
-    if ! gh issue view \
-        "$issue" \
-        --repo "$repo" \
-        --json body \
-        --jq '.body'
-    then
-        printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
-        exit 1
-    fi
+    print "$pkgbase: $msg\n";
 }
 
-edit_issue()
+sub add_job_summary ($msg)
 {
-    local type=$1
-    local issue=$2
-    local title=$3
-    local body=$4
+    my $fname = $ENV{GITHUB_STEP_SUMMARY} // '';
 
-    printf '%s\n' "$pkgbase: updating $type issue #$issue with new versions"
+    open my $fh, '>>', $fname
+      or die "Failed to append to $fname: $!";
 
-    if ! gh issue edit \
-        "$issue" \
-        --repo "$repo" \
-        --title "$title" \
-        --body "$body"
-    then
-        printf '%s\n' "$pkgbase: failed to update $type issue #$issue" >&2
-        exit 1
-    fi
-
-    printf '%s\n' "- Updated $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+    print $fh "$msg\n";
+    close $fh or die $!;
 }
 
-create_issue()
+sub list_issue (%opts)
 {
-    local type=$1
-    local label=$2
-    local title=$3
-    local body=$4
+    my ( $type, $search, $label ) = @opts{ qw< type search label > };
 
-    printf '%s\n' "$pkgbase: creating $type issue"
+    my @cmd = (
+        'gh',       'issue list',
+        '--repo',   $repo,
+        '--search', qq{"author:app/aur-bump-bot '$search' in:title"},
+        '--label',  qq{'$label'},
+        '--state',  'open',
+        '--limit',  '1',
+        '--json',   'number',
+        '--jq',     '.[].number',
+    );
 
-    if ! gh issue create \
-        --repo "$repo" \
-        --label "$label" \
-        --title "$title" \
-        --body "$body"
-    then
-        printf '%s\n' "$pkgbase: failed to create $type issue" >&2
-        exit 1
-    fi
+    chomp( my $issue_num = qx(@cmd) );
 
-    printf '%s\n' "- Created $type issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+    if ( $? == 0 ) {
+        return $issue_num;
+    }
+    else {
+        err("failed to check $type issue for $pkgbase");
+    }
 }
 
-close_issue()
+sub view_issue ( $type, $issue_num )
 {
-    local type=$1
-    local issue=$2
+    my @cmd = (
+        'gh', 'issue', 'view',
+        $issue_num,
+        '--repo', $repo,
+        '--json', 'body',
+        '--jq',   '.body',
+    );
 
-    printf '%s\n' "$pkgbase: closing existing issue #$issue"
+    chomp( my $issue = qx(@cmd) );
 
-    if ! gh issue close \
-        "$issue" \
-        --repo "$repo" \
-        --comment "Current version $pkgver is latest, closing the issue."
-    then
-        printf '%s\n' "$pkgbase: failed to close $type issue #$issue" >&2
-        exit 1
-    fi
-
-    printf '%s\n' "- Closed $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+    if ( $? == 0 ) {
+        return $issue;
+    }
+    else {
+        err("failed to fetch $type issue #$issue\n");
+    }
 }
 
-update_or_create_issue()
+sub edit_issue (%opts)
 {
-    local type=$1
-    local issue=$2
-    local label=$3
-    local title=$4
-    local body=$5
+    my ( $type, $issue_num, $title, $body ) = @opts{ qw< type issue title body > };
 
-    if [[ -n $issue ]]; then
+    info("updating $type issue #$issue_num with new versions");
+
+    my @cmd = (
+        'gh', 'issue', 'edit',
+        $issue_num,
+        '--repo',  $repo,
+        '--title', $title,
+        '--body',  $body,
+    );
+
+    system(@cmd) == 0
+      or err("failed to update $type issue #$issue_num\n");
+
+    my $msg = "- Updated $type issue #$issue_num for $pkgbase";
+    add_job_summary($msg);
+}
+
+sub create_issue (%opts)
+{
+    my ( $type, $label, $title, $body ) = @opts{ qw< type label title body > };
+
+    info("creating $type issue");
+
+    my @cmd = (
+        'gh',      'issue', 'create',
+        '--repo',  $repo,
+        '--label', $label,
+        '--title', $title,
+        '--body',  $body,
+    );
+
+    system(@cmd) == 0
+      or err("failed to create $type issue");
+}
+
+sub close_issue (%opts)
+{
+    my ( $type, $issue_num ) = @opts{ qw< type issue > };
+
+    info("closing existing issue #$issue_num");
+
+    my @cmd = (
+        'gh', 'issue', 'close',
+        $issue_num,
+        '--repo',    $repo,
+        '--comment', "Current version $pkgver is latest, closing the issue.",
+    );
+
+    system(@cmd) == 0
+      or err("failed to close $type issue #$issue_num");
+
+    my $msg = "- Closed $type issue #$issue_num for $pkgbase";
+    add_job_summary($msg);
+}
+
+sub update_or_create_issue (%opts)
+{
+    my ( $type, $issue_num, $label, $title, $body, $upstream_version ) =
+      @opts{ qw< type issue label title body upver > };
+
+    if ( $issue_num ne '' ) {
         # Extract versions from existing issue type.
 
-        local existing_body body_arr
-        existing_body=$(view_issue 'epoch' "$issue")
-        mapfile -t body_arr <<< "$existing_body"
+        my $existing_body = view_issue( 'epoch', $issue_num );
 
-        local i
-        for i in "${body_arr[@]}"; do
-            [[ $i = pkgver:* ]]           && local existing_pkgver=${i#*: }
-            [[ $i = upstream_version:* ]] && local existing_upstream=${i#*: }
-        done
+        my ($existing_pkgver) = $existing_body =~ /^pkgver: ([^\n]+)$/m;
+        err('failed to get existing pkgver version')
+          unless defined $existing_pkgver;
+
+        my ($existing_upstream) = $existing_body =~ /^upstream_version: ([^\n]+)$/m;
+        err('failed to get existing upstream version')
+          unless defined $existing_upstream;
 
         # Only update if versions have changed.
-        if [[ $existing_pkgver != "$pkgver" || $existing_upstream != "$upstream_version" ]]; then
-            edit_issue "$type" "$issue" "$title" "$body"
-        else
-            local same_issue="issue #$issue already has current version info"
+        if ( $existing_pkgver ne $pkgver || $existing_upstream ne $upstream_version ) {
+            edit_issue(%opts);
+        }
+        else {
+            my $same_issue = "issue #$issue_num already has current version info";
+            my $msg        = "- \u$type $same_issue";
 
-            printf '%s\n' "$pkgbase: $type $same_issue"
-            printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
-        fi
-    else
-        create_issue "$type" "$label" "$title" "$body"
-    fi
+            info("$type $same_issue");
+            add_job_summary($msg);
+        }
+    }
+    else {
+        create_issue(%opts);
+    }
 }
 
-check_pkg_version()
+sub check_pkg_version ()
 {
     # Get upstream version using nvchecker.
-    local upstream_version
-    if upstream_version=$(
-        nvchecker \
-            --file "$config" \
-            --logger=json \
-            2> /dev/null \
-        | jq \
-            --raw-output \
-            --exit-status \
-            'select(.name == "'"$pkgbase"'") | .version' \
-            2> /dev/null
-        )
-    then
-        if [[ -n $upstream_version && $upstream_version != 'null' ]]; then
-            local result
-            if ! result=$(vercmp "$upstream_version" "$pkgver"); then
-                printf '%s\n' "$pkgbase: failed to compare version $upstream_version against $pkgver" >&2
-                exit 1
-            fi
+    my @cmd = (
+        'nvchecker',
+        '--file', $config,
+        '--logger=json',
+        '2> /dev/null',
+        '| jq',
+        '--raw-output',
+        '--exit-status',
+        qq{'select(.name == "'"$pkgbase"'") | .version'},
+        '2> /dev/null',
+    );
+
+    chomp( my $upstream_version = qx(@cmd) );
+
+    if ( $? == 0 ) {
+        if ( $upstream_version ne '' && $upstream_version ne 'null' ) {
+            chomp( my $result = qx(vercmp $upstream_version $pkgver) );
+
+            err("failed to compare version $upstream_version against $pkgver")
+              unless $? == 0;
 
             # Check if package out-of-date issue exists.
-            local issue_ood
-            local type_ood=out-of-date
-            local search_ood="$pkgbase - new version: "
-            local label_ood='package out-of-date'
-            issue_ood=$(list_issue "$type_ood" "$search_ood" "$label_ood")
+            my %ood = (
+                type   => 'out-of-date',
+                search => "$pkgbase - new version: ",
+                label  => 'package out-of-date',
+                upver  => $upstream_version,
+            );
+            $ood{issue} = list_issue(%ood);
 
             # Check if package epoch issue exists.
-            local issue_epoch
-            local type_epoch=epoch
-            local search_epoch="$pkgbase - version mismatch"
-            local label_epoch='package needs-epoch'
-            issue_epoch=$(list_issue "$type_epoch" "$search_epoch" "$label_epoch")
+            my %epoch = (
+                type   => 'epoch',
+                search => "$pkgbase - version mismatch",
+                label  => 'package needs-epoch',
+                upver  => $upstream_version,
+            );
+            $epoch{issue} = list_issue(%epoch);
 
-            if (( result == 0 )); then
-                printf '%s\n' "$pkgbase: current version $pkgver is latest"
+            if ( $result == 0 ) {
+                info("current version $pkgver is latest");
 
-                [[ -z $issue_ood ]]   || close_issue "$type_ood" "$issue_ood"
-                [[ -z $issue_epoch ]] || close_issue "$type_epoch" "$issue_epoch"
-            elif (( result < 0 )); then
-                printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+                close_issue(%ood)   if $ood{issue} ne '';
+                close_issue(%epoch) if $epoch{issue} ne '';
+            }
+            elsif ( $result < 0 ) {
+                info("current version $pkgver is newer than $upstream_version");
 
-                local title_epoch=$search_epoch
-                local body_epoch
-                body_epoch=$(
-                    printf '%s\n'\
-                        "pkgbase: $pkgbase" \
-                        "pkgver: $pkgver" \
-                        "upstream_version: $upstream_version" \
-                        "upstream_url: $upstream_url" \
-                        "package_url: $package_url" \
-                        '' \
-                        '> [!NOTE]' \
-                        '> The pkgver version is newer than upstream, this means:' \
-                        '> - Upstream changed versioning schemes' \
-                        '> - nvchecker is pointing to the wrong source' \
-                        '> - An `epoch` bump is needed' \
-                        '>' \
-                        '> Since this breaks pacman'\''s version comparison logic, review *.nvchecker.toml* and consider adding/incrementing `epoch` in *PKGBUILD*.'
-                )
+                $epoch{title} = $epoch{search};
+                $epoch{body}  = <<~"END";
+                    pkgbase: $pkgbase
+                    pkgver: $pkgver
+                    upstream_version: $upstream_version
+                    upstream_url: $upstream_url
+                    package_url: $package_url
 
-                update_or_create_issue "$type_epoch" "$issue_epoch" "$label_epoch" "$title_epoch" "$body_epoch"
-            elif (( result > 0 )); then
-                printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+                    > [!NOTE]
+                    > The pkgver version is newer than upstream, this means:
+                    > - Upstream changed versioning schemes
+                    > - nvchecker is pointing to the wrong source
+                    > - An `epoch` bump is needed
+                    >
+                    > Since this breaks pacman'\''s version comparison logic, review *.nvchecker.toml* and consider adding/incrementing `epoch` in *PKGBUILD*.
+                    END
 
-                local title_ood=${search_ood}$upstream_version
-                local body_ood
-                body_ood=$(
-                    printf '%s\n'\
-                        "pkgbase: $pkgbase" \
-                        "pkgver: $pkgver" \
-                        "upstream_version: $upstream_version" \
-                        "upstream_url: $upstream_url" \
-                        "package_url: $package_url"
-                )
+                update_or_create_issue(%epoch);
+            }
+            elsif ( $result > 0 ) {
+                info("upgrade from version $pkgver to upstream_version");
 
-                update_or_create_issue "$type_ood" "$issue_ood" "$label_ood" "$title_ood" "$body_ood"
-             fi
-        else
-            printf '%s\n' "$pkgbase: failed to get upstream version" >&2
-            exit 1
-        fi
-    else
-        printf '%s\n' "$pkgbase: nvchecker failed to fetch upstream version" >&2
-        exit 1
-    fi
+                $ood{title} = "$ood{search}$upstream_version";
+                $ood{body}  = <<~"END";
+                    pkgbase: $pkgbase
+                    pkgver: $pkgver
+                    upstream_version: $upstream_version
+                    upstream_url: $upstream_url
+                    package_url: $package_url
+                    END
+
+                update_or_create_issue(%ood);
+            }
+        }
+        else {
+            err('failed to get upstream version');
+        }
+    }
+    else {
+        err('nvchecker failed to fetch upstream version');
+    }
 }
 
 # If the AUR package already exists in the official repo, do not check the upstream
@@ -244,118 +280,152 @@ check_pkg_version()
 #   iterates through the 'duplicate' issues, then check every package from them
 #   to confirm if they still exist on AUR. But it isn't worth for now, since this
 #   problem seems to be rare.
-is_official_pkg()
+sub is_official_pkg ()
 {
     # Check if package duplicate issue exists.
-    local issue
-    local type=duplicate
-    local search="$pkgbase - exists in official repo"
-    local label='package duplicate'
-    issue=$(list_issue "$type" "$search" "$label")
+    my %dupe = (
+        type   => 'duplicate',
+        search => "$pkgbase - exists in official repo",
+        label  => 'package duplicate',
+    );
+    my $issue = list_issue(%dupe);
 
-    if [[ -n $issue ]]; then
-        local same_issue="issue #$issue already exists"
+    if ( defined $issue && $issue ne '' ) {
+        my $same_issue = "issue #$issue already exists";
+        my $msg        = "- \u$type $same_issue";
 
-        printf '%s\n' "$pkgbase: $type $same_issue"
-        printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
+        info("$type $same_issue");
+        add_job_summary($msg);
 
-        exit 0
-    else
-        local json
-        if ! json=$(
-            curl \
-                --fail \
-                --silent \
-                --show-error \
-                "https://archlinux.org/packages/search/json/?name=$package"
-            )
-        then
-            printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
-            exit 1
-        fi
+        exit 0;
+    }
+    else {
+        my $query = "https://archlinux.org/packages/search/json/?name=$package";
+        my $resp  = HTTP::Tiny->new->get($query);
 
-        if jq --exit-status '.results | length > 0' > /dev/null <<< "$json"; then
-            printf '%s\n' "$pkgbase: package exists in official repo"
+        err("failed to fetch $type issue #$issue")
+          unless $resp->{success};
 
-            local repo arch
-            repo=$(jq --raw-output '.results[0].repo' <<< "$json")
-            arch=$(jq --raw-output '.results[0].arch' <<< "$json")
-            local pkg_url=https://archlinux.org/packages/$repo/$arch/$package
+        my $json = decode_json( $resp->{content} );
+        my $res  = $json->{results};
 
-            local title=$search
-            local body
-            body=$(
-                printf '%s\n'\
-                    "pkgbase: $pkgbase" \
-                    "pkgver: $pkgver" \
-                    "upstream_version:" \
-                    "upstream_url: $upstream_url" \
-                    "package_url: $package_url" \
-                    '' \
-                    '> [!NOTE]' \
-                    "> [$pkgbase]($pkg_url) already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it." \
-                    '>' \
-                    '> Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).'
-            )
+        if ( scalar $res->@* > 0 ) {
+            info('package exists in official repo');
 
-            create_issue "$type" "$label" "$title" "$body"
-            exit 0
-        else
-            printf '%s\n' "$pkgbase: package does not exist in official repo"
-        fi
-    fi
+            my $repos   = $res->[0]{repo};
+            my $arch    = $res->[0]{arch};
+            my $pkg_url = "https://archlinux.org/packages/$repos/$arch/$package";
+
+            $dupe{title} = $dupe{search};
+            $dupe{body}  = <<~"END";
+                pkgbase: $pkgbase
+                pkgver: $pkgver
+                upstream_version:
+                upstream_url: $upstream_url
+                package_url: $package_url
+
+                > [!NOTE]
+                > [$pkgbase]($pkg_url) already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it.
+                >
+                > Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).
+                END
+
+            create_issue(%dupe);
+            exit 0;
+        }
+        else {
+            info('package does not exist in official repo');
+        }
+    }
 }
 
-source_pkgbuild ()
+sub parse_srcinfo ()
 {
-    cd "$package" || exit 1
+    chdir $package
+      or die "Failed to change directory to $package: $!";
 
-    config=.nvchecker.toml
+    $config = '.nvchecker.toml';
+    foreach my $file ( 'PKGBUILD', $config ) {
+        if ( !-f $file ) {
+            warn "$file does not exist\n";
+            exit 1;
+        }
+    }
 
-    for file in PKGBUILD "$config"; do
-        if [[ ! -f $file ]]; then
-            printf '%s\n' "$file does not exist" >&2
-            exit 1
-        fi
-    done
+    my $fname = '.SRCINFO';
+    open my $fh, '<:encoding(UTF-8)', $fname
+      or die "Failed to open $fname: $!";
 
-    # Reset common PKGBUILD vars.
-    unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
+    chomp( my @lines = <$fh> );
+    close $fh or die $!;
 
-    # Get PKGBUILD vars.
-    source ./PKGBUILD
+    my @VARS = (
+        qw<
+            pkgbase
+            pkgver
+            url
+        >
+    );
 
-    pkgbase=${pkgbase:-$pkgname}
-    upstream_url=$url
-    package_url=https://aur.archlinux.org/packages/$pkgbase
+    my %srcinfo_meta;
+    foreach my $line (@lines) {
+        next if $line eq '';
+
+        my ( $key, $val ) = split / = /, $line;
+        next unless defined $val;
+        $key =~ s{\A\t}{};
+
+        if ( any { $key eq $_ } @VARS ) {
+            $srcinfo_meta{$key} = $val;
+            next;
+        }
+
+        push $srcinfo_meta{$key}->@*, $val;
+    }
+
+    $pkgbase      = $srcinfo_meta{pkgbase} // $srcinfo_meta{pkgname};
+    $upstream_url = $srcinfo_meta{url};
+    $package_url  = "https://aur.archlinux.org/packages/$pkgbase";
 }
 
 # Clone the GH mirror repo and fallback to AUR to reduce load in Arch servers
 # and avoid rate limiting.
-clone_pkg ()
+sub clone_pkg ()
 {
-    local gh=https://github.com/archlinux/aur
-    local aur=https://aur@aur.archlinux.org/
+    my %repos = (
+        gh => {
+            url => 'https://github.com/archlinux/aur',
+            cmd => [
+                'git', 'clone',
+                '--single-branch',
+                '--branch', $package,
+                'https://github.com/archlinux/aur.git',
+                $package,
+            ],
+        },
+        aur => {
+            url => 'https://aur.archlinux.org/',
+            cmd => [
+                'git', 'clone',
+                "https://aur.archlinux.org/$package.git",
+            ],
+        },
+    );
 
-    if ! git clone \
-        --single-branch \
-        --branch "$package" \
-        "$gh".git \
-        "$package"
-    then
-        local err="Failed to clone $package from"
-        printf '%s\n' "$err $gh" >&2
+    if ( system( $repos{gh}{cmd}->@* ) != 0 ) {
+        my $err = "Failed to clone $package from";
+        warn "$err $repos{gh}{url}\n";
 
-        if ! git clone "${aur}$package".git; then
-            printf '%s\n' "$err $aur" >&2
-            exit 1
-        fi
-    fi
+        if ( system( $repos{aur}{cmd}->@* ) != 0 ) {
+            warn "$err $repos{aur}{url}\n";
+            exit 1;
+        }
+    }
 }
 
-printf '%s\n' "Checking $package version"
+info("Checking $package version");
 
-clone_pkg
-source_pkgbuild
-is_official_pkg
-check_pkg_version
+clone_pkg();
+parse_srcinfo();
+is_official_pkg();
+check_pkg_version();

@@ -1,0 +1,361 @@
+#!/bin/bash
+#
+# Based on 'pkgctl version check' and Bumpbuddy.
+# https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
+# https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
+
+set -o pipefail
+
+repo=$GITHUB_REPOSITORY
+package=$PACKAGE_NAME
+
+list_issue()
+{
+    local type=$1
+    local search=$2
+    local label=$3
+
+    if ! gh issue list \
+        --repo "$repo" \
+        --search "author:app/aur-bump-bot '$search' in:title" \
+        --label "$label" \
+        --state open \
+        --limit 1 \
+        --json number \
+        --jq '.[].number'
+    then
+        printf '%s\n' "$pkgbase: failed to check $type issue for $pkgbase" >&2
+        exit 1
+    fi
+}
+
+view_issue()
+{
+    local type=$1
+    local issue=$2
+
+    if ! gh issue view \
+        "$issue" \
+        --repo "$repo" \
+        --json body \
+        --jq '.body'
+    then
+        printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
+        exit 1
+    fi
+}
+
+edit_issue()
+{
+    local type=$1
+    local issue=$2
+    local title=$3
+    local body=$4
+
+    printf '%s\n' "$pkgbase: updating $type issue #$issue with new versions"
+
+    if ! gh issue edit \
+        "$issue" \
+        --repo "$repo" \
+        --title "$title" \
+        --body "$body"
+    then
+        printf '%s\n' "$pkgbase: failed to update $type issue #$issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Updated $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+create_issue()
+{
+    local type=$1
+    local label=$2
+    local title=$3
+    local body=$4
+
+    printf '%s\n' "$pkgbase: creating $type issue"
+
+    if ! gh issue create \
+        --repo "$repo" \
+        --label "$label" \
+        --title "$title" \
+        --body "$body"
+    then
+        printf '%s\n' "$pkgbase: failed to create $type issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Created $type issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+close_issue()
+{
+    local type=$1
+    local issue=$2
+
+    printf '%s\n' "$pkgbase: closing existing issue #$issue"
+
+    if ! gh issue close \
+        "$issue" \
+        --repo "$repo" \
+        --comment "Current version $pkgver is latest, closing the issue."
+    then
+        printf '%s\n' "$pkgbase: failed to close $type issue #$issue" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "- Closed $type issue #$issue for $pkgbase" >> "$GITHUB_STEP_SUMMARY"
+}
+
+update_or_create_issue()
+{
+    local type=$1
+    local issue=$2
+    local label=$3
+    local title=$4
+    local body=$5
+
+    if [[ -n $issue ]]; then
+        # Extract versions from existing issue type.
+
+        local existing_body body_arr
+        existing_body=$(view_issue 'epoch' "$issue")
+        mapfile -t body_arr <<< "$existing_body"
+
+        local i
+        for i in "${body_arr[@]}"; do
+            [[ $i = pkgver:* ]]           && local existing_pkgver=${i#*: }
+            [[ $i = upstream_version:* ]] && local existing_upstream=${i#*: }
+        done
+
+        # Only update if versions have changed.
+        if [[ $existing_pkgver != "$pkgver" || $existing_upstream != "$upstream_version" ]]; then
+            edit_issue "$type" "$issue" "$title" "$body"
+        else
+            local same_issue="issue #$issue already has current version info"
+
+            printf '%s\n' "$pkgbase: $type $same_issue"
+            printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
+        fi
+    else
+        create_issue "$type" "$label" "$title" "$body"
+    fi
+}
+
+check_pkg_version()
+{
+    # Get upstream version using nvchecker.
+    local upstream_version
+    if upstream_version=$(
+        nvchecker \
+            --file "$config" \
+            --logger=json \
+            2> /dev/null \
+            | jq \
+                --raw-output \
+                --exit-status \
+                'select(.name == "'"$pkgbase"'") | .version' \
+                2> /dev/null
+        )
+    then
+        if [[ -n $upstream_version && $upstream_version != 'null' ]]; then
+            local result
+            if ! result=$(vercmp "$upstream_version" "$pkgver"); then
+                printf '%s\n' "$pkgbase: failed to compare version $upstream_version against $pkgver" >&2
+                exit 1
+            fi
+
+            # Check if package out-of-date issue exists.
+            local issue_ood
+            local type_ood=out-of-date
+            local search_ood="$pkgbase - new version: "
+            local label_ood='package out-of-date'
+            issue_ood=$(list_issue "$type_ood" "$search_ood" "$label_ood")
+
+            # Check if package epoch issue exists.
+            local issue_epoch
+            local type_epoch=epoch
+            local search_epoch="$pkgbase - version mismatch"
+            local label_epoch='package needs-epoch'
+            issue_epoch=$(list_issue "$type_epoch" "$search_epoch" "$label_epoch")
+
+            if ((result == 0)); then
+                printf '%s\n' "$pkgbase: current version $pkgver is latest"
+
+                [[ -z $issue_ood ]]   || close_issue "$type_ood" "$issue_ood"
+                [[ -z $issue_epoch ]] || close_issue "$type_epoch" "$issue_epoch"
+            elif ((result < 0)); then
+                printf '%s\n' "$pkgbase: current version $pkgver is newer than $upstream_version"
+
+                local title_epoch=$search_epoch
+                local body_epoch
+                body_epoch=$(
+                    printf '%s\n' \
+                        "pkgbase: $pkgbase" \
+                        "pkgver: $pkgver" \
+                        "upstream_version: $upstream_version" \
+                        "upstream_url: $upstream_url" \
+                        "package_url: $package_url" \
+                        '' \
+                        '> [!NOTE]' \
+                        '> The pkgver version is newer than upstream, this means:' \
+                        '> - Upstream changed versioning schemes' \
+                        '> - nvchecker is pointing to the wrong source' \
+                        '> - An `epoch` bump is needed' \
+                        '>' \
+                        '> Since this breaks pacman'\''s version comparison logic, review *.nvchecker.toml* and consider adding/incrementing `epoch` in *PKGBUILD*.'
+                )
+
+                update_or_create_issue "$type_epoch" "$issue_epoch" "$label_epoch" "$title_epoch" "$body_epoch"
+            elif ((result > 0)); then
+                printf '%s\n' "$pkgbase: upgrade from version $pkgver to $upstream_version"
+
+                local title_ood=${search_ood}$upstream_version
+                local body_ood
+                body_ood=$(
+                    printf '%s\n' \
+                        "pkgbase: $pkgbase" \
+                        "pkgver: $pkgver" \
+                        "upstream_version: $upstream_version" \
+                        "upstream_url: $upstream_url" \
+                        "package_url: $package_url"
+                )
+
+                update_or_create_issue "$type_ood" "$issue_ood" "$label_ood" "$title_ood" "$body_ood"
+            fi
+        else
+            printf '%s\n' "$pkgbase: failed to get upstream version" >&2
+            exit 1
+        fi
+    else
+        printf '%s\n' "$pkgbase: nvchecker failed to fetch upstream version" >&2
+        exit 1
+    fi
+}
+
+# If the AUR package already exists in the official repo, do not check the upstream
+# version but create an issue informing the packager to submit a deletion request,
+# because a Package Maintainer could create an existing AUR package without checking
+# or never bother to delete it.
+#
+# TODO:
+#   To close resolved issues, maybe create a check outside the CI matrix which
+#   iterates through the 'duplicate' issues, then check every package from them
+#   to confirm if they still exist on AUR. But it isn't worth for now, since this
+#   problem seems to be rare.
+is_official_pkg()
+{
+    # Check if package duplicate issue exists.
+    local issue
+    local type=duplicate
+    local search="$pkgbase - exists in official repo"
+    local label='package duplicate'
+    issue=$(list_issue "$type" "$search" "$label")
+
+    if [[ -n $issue ]]; then
+        local same_issue="issue #$issue already exists"
+
+        printf '%s\n' "$pkgbase: $type $same_issue"
+        printf '%s\n' "- ${type@u} $same_issue" >> "$GITHUB_STEP_SUMMARY"
+
+        exit 0
+    else
+        local json
+        if ! json=$(
+            curl \
+                --fail \
+                --silent \
+                --show-error \
+                "https://archlinux.org/packages/search/json/?name=$package"
+            )
+        then
+            printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
+            exit 1
+        fi
+
+        if jq --exit-status '.results | length > 0' > /dev/null <<< "$json"; then
+            printf '%s\n' "$pkgbase: package exists in official repo"
+
+            local repos arch
+            repos=$(jq --raw-output '.results[0].repo' <<< "$json")
+            arch=$(jq --raw-output '.results[0].arch' <<< "$json")
+            local pkg_url=https://archlinux.org/packages/$repos/$arch/$package
+
+            local title=$search
+            local body
+            body=$(
+                printf '%s\n' \
+                    "pkgbase: $pkgbase" \
+                    "pkgver: $pkgver" \
+                    "upstream_version:" \
+                    "upstream_url: $upstream_url" \
+                    "package_url: $package_url" \
+                    '' \
+                    '> [!NOTE]' \
+                    "> [$pkgbase]($pkg_url) already exists in the official repository. This means that a Package Maintainer created this package without checking or did not bother to delete it." \
+                    '>' \
+                    '> Since this is against the [rules](https://wiki.archlinux.org/title/AUR_submission_guidelines#Rules_of_submission), it is recommended to submit a [deletion request](https://wiki.archlinux.org/title/AUR_submission_guidelines#Deletion).'
+            )
+
+            create_issue "$type" "$label" "$title" "$body"
+            exit 0
+        else
+            printf '%s\n' "$pkgbase: package does not exist in official repo"
+        fi
+    fi
+}
+
+source_pkgbuild()
+{
+    cd "$package" || exit 1
+
+    config=.nvchecker.toml
+
+    for file in PKGBUILD "$config"; do
+        if [[ ! -f $file ]]; then
+            printf '%s\n' "$file does not exist" >&2
+            exit 1
+        fi
+    done
+
+    # Reset common PKGBUILD vars.
+    unset pkgbase pkgname arch source pkgver pkgrel validpgpkeys
+
+    # Get PKGBUILD vars.
+    source ./PKGBUILD
+
+    pkgbase=${pkgbase:-$pkgname}
+    upstream_url=$url
+    package_url=https://aur.archlinux.org/packages/$pkgbase
+}
+
+# Clone the GH mirror repo and fallback to AUR to reduce load in Arch servers
+# and avoid rate limiting.
+clone_pkg()
+{
+    local gh=https://github.com/archlinux/aur
+    local aur=https://aur@aur.archlinux.org/
+
+    if ! git clone \
+        --single-branch \
+        --branch "$package" \
+        "$gh".git \
+        "$package"
+    then
+        local err="Failed to clone $package from"
+        printf '%s\n' "$err $gh" >&2
+
+        if ! git clone "${aur}$package".git; then
+            printf '%s\n' "$err $aur" >&2
+            exit 1
+        fi
+    fi
+}
+
+printf '%s\n' "Checking $package version"
+
+clone_pkg
+source_pkgbuild
+is_official_pkg
+check_pkg_version
