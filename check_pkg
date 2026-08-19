@@ -425,7 +425,7 @@ sub clone_pkg ()
     }
 }
 
-info("Checking $package version");
+print "Checking $package version\n";
 
 clone_pkg();
 parse_srcinfo();
