@@ -12,6 +12,7 @@ my $repo    = $ENV{GITHUB_REPOSITORY};
 my $package = $ENV{PACKAGE_NAME};
 my $config;
 my $pkgbase;
+my $pkgver;
 my $upstream_url;
 my $package_url;
 
@@ -292,9 +293,9 @@ sub is_official_pkg ()
 
     if ( defined $issue && $issue ne '' ) {
         my $same_issue = "issue #$issue already exists";
-        my $msg        = "- \u$type $same_issue";
+        my $msg        = "- \u$dupe{type} $same_issue";
 
-        info("$type $same_issue");
+        info("$dupe{type} $same_issue");
         add_job_summary($msg);
 
         exit 0;
@@ -303,7 +304,7 @@ sub is_official_pkg ()
         my $query = "https://archlinux.org/packages/search/json/?name=$package";
         my $resp  = HTTP::Tiny->new->get($query);
 
-        err("failed to fetch $type issue #$issue")
+        err("failed to fetch $dupe{type} issue #$issue")
           unless $resp->{success};
 
         my $json = decode_json( $resp->{content} );
@@ -384,6 +385,7 @@ sub parse_srcinfo ()
     }
 
     $pkgbase      = $srcinfo_meta{pkgbase} // $srcinfo_meta{pkgname};
+    $pkgver       = $srcinfo_meta{pkgver};
     $upstream_url = $srcinfo_meta{url};
     $package_url  = "https://aur.archlinux.org/packages/$pkgbase";
 }
