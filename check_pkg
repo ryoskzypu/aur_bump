@@ -8,13 +8,14 @@ use v5.38.0;  # Current perl version from GH CI runner (Ubuntu 24.04LTS)
 use strict;
 use warnings;
 
-use List::Util qw< any >;
 use HTTP::Tiny;
-use JSON::PP qw< decode_json >;
+use JSON::PP   qw< decode_json >;
+use List::Util qw< any >;
 
 my $repo    = $ENV{GITHUB_REPOSITORY};
 my $package = $ENV{PACKAGE_NAME};
-my $config;
+
+my $CONFIG = '.nvchecker.toml';
 my $pkgbase;
 my $pkgver;
 my $upstream_url;
@@ -47,7 +48,8 @@ sub list_issue (%opts)
     my ( $type, $search, $label ) = @opts{ qw< type search label > };
 
     my @cmd = (
-        'gh',       'issue list',
+        'gh',
+        'issue list',
         '--repo',   $repo,
         '--search', qq{"author:app/aur-bump-bot '$search' in:title"},
         '--label',  qq{'$label'},
@@ -70,7 +72,9 @@ sub list_issue (%opts)
 sub view_issue ( $type, $issue_num )
 {
     my @cmd = (
-        'gh', 'issue', 'view',
+        'gh',
+        'issue',
+        'view',
         $issue_num,
         '--repo', $repo,
         '--json', 'body',
@@ -94,7 +98,9 @@ sub edit_issue (%opts)
     info("updating $type issue #$issue_num with new versions");
 
     my @cmd = (
-        'gh', 'issue', 'edit',
+        'gh',
+        'issue',
+        'edit',
         $issue_num,
         '--repo',  $repo,
         '--title', $title,
@@ -115,7 +121,9 @@ sub create_issue (%opts)
     info("creating $type issue");
 
     my @cmd = (
-        'gh',      'issue', 'create',
+        'gh',
+        'issue',
+        'create',
         '--repo',  $repo,
         '--label', $label,
         '--title', $title,
@@ -136,7 +144,9 @@ sub close_issue (%opts)
     info("closing existing issue #$issue_num");
 
     my @cmd = (
-        'gh', 'issue', 'close',
+        'gh',
+        'issue',
+        'close',
         $issue_num,
         '--repo',    $repo,
         '--comment', "Current version $pkgver is latest, closing the issue.",
@@ -172,11 +182,11 @@ sub update_or_create_issue (%opts)
             edit_issue(%opts);
         }
         else {
-            my $same_issue = "issue #$issue_num already has current version info";
-            my $msg        = "- \u$type $same_issue";
+            my $msg  = "issue #$issue_num already has current version info";
+            my $summ = "- \u$type $msg";
 
-            info("$type $same_issue");
-            add_job_summary($msg);
+            info("$type $msg");
+            add_job_summary($summ);
         }
     }
     else {
@@ -189,10 +199,11 @@ sub check_pkg_version ()
     # Get upstream version using nvchecker.
     my @cmd = (
         'nvchecker',
-        '--file', $config,
+        '--file', $CONFIG,
         '--logger=json',
         '2> /dev/null',
-        '| jq',
+        '|',
+        'jq',
         '--raw-output',
         '--exit-status',
         qq{'select(.name == "'"$pkgbase"'") | .version'},
@@ -299,11 +310,11 @@ sub is_official_pkg ()
     my $issue = list_issue(%dupe);
 
     if ( defined $issue && $issue ne '' ) {
-        my $same_issue = "issue #$issue already exists";
-        my $msg        = "- \u$dupe{type} $same_issue";
+        my $msg  = "issue #$issue already exists";
+        my $summ = "- \u$dupe{type} $msg";
 
-        info("$dupe{type} $same_issue");
-        add_job_summary($msg);
+        info("$dupe{type} $msg");
+        add_job_summary($summ);
 
         exit 0;
     }
@@ -328,7 +339,7 @@ sub is_official_pkg ()
             $dupe{body}  = <<~"END";
                 pkgbase: $pkgbase
                 pkgver: $pkgver
-                upstream_version:
+                upstream_version: -
                 upstream_url: $upstream_url
                 package_url: $package_url
 
@@ -352,20 +363,22 @@ sub parse_srcinfo ()
     chdir $package
       or die "Failed to change directory to $package: $!";
 
-    $config = '.nvchecker.toml';
-    foreach my $file ( 'PKGBUILD', $config ) {
+    foreach my $file ( 'PKGBUILD', $CONFIG ) {
         if ( !-f $file ) {
             warn "$file does not exist\n";
             exit 1;
         }
     }
 
-    my $fname = '.SRCINFO';
-    open my $fh, '<:encoding(UTF-8)', $fname
-      or die "Failed to open $fname: $!";
+    my $META = '.SRCINFO';
+    my @lines;
+    {
+        open my $fh, '<:encoding(UTF-8)', $META
+          or die "Failed to open $META: $!";
 
-    chomp( my @lines = <$fh> );
-    close $fh or die $!;
+        chomp( @lines = <$fh> );
+        close $fh or die $!;
+    }
 
     my @VARS = (
         qw<
@@ -374,8 +387,8 @@ sub parse_srcinfo ()
             url
         >
     );
+    my %srcinfo;
 
-    my %srcinfo_meta;
     foreach my $line (@lines) {
         next if $line eq '';
 
@@ -384,20 +397,25 @@ sub parse_srcinfo ()
         $key =~ s{\A\t}{};
 
         if ( any { $key eq $_ } @VARS ) {
-            $srcinfo_meta{$key} = $val;
+            $srcinfo{$key} = $val;
             next;
         }
 
-        push $srcinfo_meta{$key}->@*, $val;
+        push $srcinfo{$key}->@*, $val;
     }
 
-    $pkgbase      = $srcinfo_meta{pkgbase} // $srcinfo_meta{pkgname};
-    $pkgver       = $srcinfo_meta{pkgver};
-    $upstream_url = $srcinfo_meta{url};
+    foreach my ($var) (@VARS) {
+        err("$var is not declared in $META")
+          if $var ne 'url' && !exists $srcinfo{$var};
+    }
+
+    $pkgbase      = $srcinfo{pkgbase};
+    $pkgver       = $srcinfo{pkgver};
+    $upstream_url = $srcinfo{url} // '';
     $package_url  = "https://aur.archlinux.org/packages/$pkgbase";
 }
 
-# Clone the GH mirror repo and fallback to AUR to reduce load in Arch servers
+# Clone AUR's GH mirror repo and fallback to AUR to reduce load in Arch servers
 # and avoid rate limiting.
 sub clone_pkg ()
 {
@@ -405,7 +423,8 @@ sub clone_pkg ()
         gh => {
             url => 'https://github.com/archlinux/aur',
             cmd => [
-                'git', 'clone',
+                'git',
+                'clone',
                 '--single-branch',
                 '--branch', $package,
                 'https://github.com/archlinux/aur.git',
@@ -415,7 +434,8 @@ sub clone_pkg ()
         aur => {
             url => 'https://aur.archlinux.org/',
             cmd => [
-                'git', 'clone',
+                'git',
+                'clone',
                 "https://aur.archlinux.org/$package.git",
             ],
         },
