@@ -79,7 +79,7 @@ sub view_issue ( $type, $issue_num )
         return $issue;
     }
     else {
-        err("failed to fetch $type issue #$issue\n");
+        err("failed to fetch $type issue #$issue_num\n");
     }
 }
 
