@@ -26,7 +26,7 @@ if ( length $res->{content} ) {
     }
 
     my $pkgs_cnt = scalar @pkgs;
-    my $matrix   = encode_json \@pkgs;
+    my $matrix   = encode_json( \@pkgs );
 
     my $info = <<~"END";
         - Maintainer: $MAINTAINER
