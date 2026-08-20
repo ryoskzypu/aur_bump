@@ -79,7 +79,7 @@ sub view_issue ( $type, $issue_num )
         return $issue;
     }
     else {
-        err("failed to fetch $type issue #$issue_num\n");
+        err("failed to fetch $type issue #$issue_num");
     }
 }
 
@@ -98,7 +98,7 @@ sub edit_issue (%opts)
     );
 
     system(@cmd) == 0
-      or err("failed to update $type issue #$issue_num\n");
+      or err("failed to update $type issue #$issue_num");
 
     my $msg = "- Updated $type issue #$issue_num for $pkgbase";
     add_job_summary($msg);
