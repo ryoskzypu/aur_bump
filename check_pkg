@@ -120,6 +120,9 @@ sub create_issue (%opts)
 
     system(@cmd) == 0
       or err("failed to create $type issue");
+
+    my $msg = "- Created $type issue for $pkgbase";
+    add_job_summary($msg);
 }
 
 sub close_issue (%opts)
