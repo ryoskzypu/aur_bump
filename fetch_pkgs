@@ -5,7 +5,7 @@ use strict;
 use warnings;
 
 use HTTP::Tiny;
-use JSON::PP;
+use JSON::PP qw< encode_json decode_json >;
 
 my $MAINTAINER = 'ryoskzypu';
 my $url        = "https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer";
