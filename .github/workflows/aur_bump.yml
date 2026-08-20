@@ -47,7 +47,7 @@ jobs:
       - name: 'Install + cache apt dependencies'
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: makepkg nvchecker
+          packages: libio-socket-ssl-perl makepkg nvchecker
           version: 1.0
 
       - uses: actions/checkout@v6
