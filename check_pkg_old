@@ -262,15 +262,17 @@ is_official_pkg()
         exit 0
     else
         local json
+        local query="https://archlinux.org/packages/search/json/?name=$package"
+
         if ! json=$(
             curl \
                 --fail \
                 --silent \
                 --show-error \
-                "https://archlinux.org/packages/search/json/?name=$package"
+                "$query"
             )
         then
-            printf '%s\n' "$pkgbase: failed to fetch $type issue #$issue" >&2
+            printf '%s\n' "$pkgbase: failed to fetch $type issue query: $query" >&2
             exit 1
         fi
 
