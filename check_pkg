@@ -404,7 +404,7 @@ sub parse_srcinfo ()
         push $srcinfo{$key}->@*, $val;
     }
 
-    foreach my ($var) (@VARS) {
+    foreach my $var (@VARS) {
         err("$var is not declared in $META")
           if $var ne 'url' && !exists $srcinfo{$var};
     }
