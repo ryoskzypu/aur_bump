@@ -11,8 +11,8 @@ my $MAINTAINER = 'ryoskzypu';
 my $AGENT      = "$MAINTAINER/aur_bump";
 my $endpoint   = "https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer";
 
-my $res = HTTP::Tiny->new->( agent => $AGENT )->get($endpoint);
-die "Failed to fetch AUR\n" unless $res->{success};
+my $res = HTTP::Tiny->new( agent => $AGENT )->get($endpoint);
+die "Failed to request AUR\n" unless $res->{success};
 
 if ( length $res->{content} ) {
     my $json = decode_json( $res->{content} );

@@ -332,7 +332,7 @@ sub is_official_pkg ()
         my $resp;
 
         foreach my $i ( 0 .. $retries ) {
-            $resp = HTTP::Tiny->new->( agent => $AGENT )->get($ENDPOINT);
+            $resp = HTTP::Tiny->new( agent => $AGENT )->get($ENDPOINT);
             last if $resp->{success};
 
             info($msg);
