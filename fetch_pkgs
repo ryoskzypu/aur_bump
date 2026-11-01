@@ -8,9 +8,10 @@ use HTTP::Tiny;
 use JSON::PP qw< encode_json decode_json >;
 
 my $MAINTAINER = 'ryoskzypu';
-my $url        = "https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer";
+my $AGENT      = "$MAINTAINER/aur_bump";
+my $endpoint   = "https://aur.archlinux.org/rpc/v5/search/$MAINTAINER?by=maintainer";
 
-my $res = HTTP::Tiny->new->get($url);
+my $res = HTTP::Tiny->new->( agent => $AGENT )->get($endpoint);
 die "Failed to fetch AUR\n" unless $res->{success};
 
 if ( length $res->{content} ) {

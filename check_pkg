@@ -319,8 +319,14 @@ sub is_official_pkg ()
         exit 0;
     }
     else {
-        my $query = "https://archlinux.org/packages/search/json/?name=$package";
-        my $resp  = HTTP::Tiny->new->get($query);
+        my $ENDPOINT = 'https://archlinux.org/api/v1/packages/search/';
+
+        # https://en.wikipedia.org/wiki/Percent-encoding
+        # https://wiki.archlinux.org/title/Arch_package_guidelines#Package_naming
+        my $query  = '?name=' . $package =~ s{([^A-Za-z0-9\-._~])}{sprintf '%%%02X', ord $1}egr;
+        $ENDPOINT .= $query;
+
+        my $resp = HTTP::Tiny->new->get($ENDPOINT);
 
         err("failed to fetch $dupe{type} issue query: $query")
           unless $resp->{success};
