@@ -12,6 +12,7 @@ use HTTP::Tiny;
 use JSON::PP   qw< decode_json >;
 use List::Util qw< any >;
 
+my $AGENT   = 'ryoskzypu/aur_bump';
 my $repo    = $ENV{GITHUB_REPOSITORY};
 my $package = $ENV{PACKAGE_NAME};
 
@@ -87,7 +88,7 @@ sub view_issue ( $type, $issue_num )
         return $issue;
     }
     else {
-        err("failed to fetch $type issue #$issue_num");
+        err("failed to request $type issue #$issue_num");
     }
 }
 
@@ -285,7 +286,7 @@ sub check_pkg_version ()
         }
     }
     else {
-        err('nvchecker failed to fetch upstream version');
+        err('nvchecker failed to request upstream version');
     }
 }
 
@@ -326,10 +327,25 @@ sub is_official_pkg ()
         my $query  = '?name=' . $package =~ s{([^A-Za-z0-9\-._~])}{sprintf '%%%02X', ord $1}egr;
         $ENDPOINT .= $query;
 
-        my $resp = HTTP::Tiny->new->get($ENDPOINT);
+        my $retries = 1;
+        my $msg     = "failed to request $dupe{type} issue query: $ENDPOINT";
+        my $resp;
 
-        err("failed to fetch $dupe{type} issue query: $query")
-          unless $resp->{success};
+        foreach my $i ( 0 .. $retries ) {
+            $resp = HTTP::Tiny->new->( agent => $AGENT )->get($ENDPOINT);
+            last if $resp->{success};
+
+            info($msg);
+            info("retry attempt: $i");
+            sleep 2;
+        }
+
+        if ( !$resp->{success} ) {
+            my $summ = "- \u$msg";
+            add_job_summary($summ);
+
+            return 1;
+        }
 
         my $json = decode_json( $resp->{content} );
         my $res  = $json->{results};
