@@ -206,7 +206,7 @@ sub check_pkg_version ()
         'jq',
         '--raw-output',
         '--exit-status',
-        qq{'select(.name == "'"$pkgbase"'") | .version'},
+        qq{'select(.name == "'"$pkgbase"'" and .level == "info") | .version'},
         '2> /dev/null',
     );
 
