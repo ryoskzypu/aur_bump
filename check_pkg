@@ -327,21 +327,23 @@ sub is_official_pkg ()
         my $query  = '?name=' . $package =~ s{([^A-Za-z0-9\-._~])}{sprintf '%%%02X', ord $1}egr;
         $ENDPOINT .= $query;
 
-        my $retries = 1;
+        my $retries = 2;
         my $msg     = "failed to request $dupe{type} issue query: $ENDPOINT";
         my $resp;
 
-        foreach my $i ( 0 .. $retries ) {
+        foreach my $i ( 1 .. $retries ) {
             $resp = HTTP::Tiny->new( agent => $AGENT )->get($ENDPOINT);
             last if $resp->{success};
 
             info($msg);
             info("retry attempt: $i");
-            sleep 2;
+            sleep 5;
         }
 
         if ( !$resp->{success} ) {
             my $summ = "- \u$msg";
+
+            info($msg);
             add_job_summary($summ);
 
             return 1;
