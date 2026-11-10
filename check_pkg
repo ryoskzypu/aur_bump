@@ -4,7 +4,7 @@
 # https://gitlab.archlinux.org/archlinux/devtools/-/blob/master/src/lib/version/check.sh
 # https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
 
-use v5.38.0;  # Current perl version from GH CI runner (Ubuntu 24.04LTS)
+use v5.40.0;  # Current perl version from GH CI runner (Ubuntu 26.04 LTS)
 use strict;
 use warnings;
 
