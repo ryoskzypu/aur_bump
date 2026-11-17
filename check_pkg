@@ -476,6 +476,11 @@ sub clone_pkg ()
     }
 }
 
+if ( !defined $package ) {
+    warn "Package name is not defined\n";
+    exit 1;
+}
+
 print "Checking $package version\n";
 
 clone_pkg();

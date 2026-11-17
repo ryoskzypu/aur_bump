@@ -1,0 +1,62 @@
+name: 'AUR package update checker'
+
+on:
+  workflow_call:
+    inputs:
+      filename:
+        description: 'Filename containing which AUR packages to check. Content of file must be JSON array.'
+        type: string
+        required: true
+
+jobs:
+  get-packages:
+    runs-on: ubuntu-latest
+
+    outputs:
+      packages: ${{ steps.read-file.outputs.packages }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: 'Read packages from file'
+        id: read-file
+        env:
+          FILE: ${{ inputs.filename }}
+        shell: bash
+        run: |
+          printf '%s\n' "packages=$(< $FILE)" >> $GITHUB_OUTPUT
+
+
+  check-packages:
+    needs: get-packages
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        package: ${{ fromJson(needs.get-packages.outputs.packages) }}
+
+      max-parallel: 3
+
+    steps:
+      - name: 'Generate GitHub App token'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: 'Install + cache apt dependencies'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libio-socket-ssl-perl makepkg nvchecker
+          version: 1.0
+
+      - uses: actions/checkout@v7
+      - name: 'Check package version'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PACKAGE_NAME: ${{ matrix.package }}
+
+        shell: bash
+        run: |
+          chmod +x check_pkg
+          ./check_pkg
