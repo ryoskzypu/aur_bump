@@ -1,0 +1,303 @@
+#!/usr/bin/env perl
+
+use v5.40.0;
+
+use strict;
+use warnings;
+use open qw< :std :encoding(UTF-8) >;
+
+use File::Basename qw< basename >;
+use Getopt::Long   qw<
+    :config
+    default
+    gnu_getopt
+    no_ignore_case
+>;
+use Data::Printer;
+
+our $VERSION = 'v1.0.0';
+
+my $prog = basename($0);
+my $maintainer;
+my $dry_run;
+my $verbose;
+
+my $TEMPLATE = <<~'END';
+    name: 'aur_bump_N (AUR package update checker)'
+    description: 'Call check_packages.yml weekly at midnight UTC'
+
+    on:
+      schedule:
+        - cron: '0 0 * * Sun'
+
+      workflow_dispatch:
+
+    jobs:
+      call-check-packages:
+        uses: ryoskzypu/aur_bump/.github/workflows/check_packages.yml@main
+        with:
+          packages: 
+
+        secrets: inherit
+    END
+
+sub process_opts ()
+{
+    GetOptions(
+        'dry-run' => \$dry_run,
+        'h|help'  => sub {
+            require Pod::Usage;
+            Pod::Usage::pod2usage( -exitval => 0, -verbose => 0 );
+        },
+        'v|verbose' => \$verbose,
+        'V|version' => sub { print "$prog $VERSION\n"; exit 0 },
+    ) or exit 2;
+
+    $maintainer = shift @ARGV;
+
+    _err('missing maintainer name')
+      unless defined $maintainer;
+}
+
+sub update_workflows ()
+{
+    # Print to STDERR by default (unbuffered)
+    select STDERR;
+    STDERR->autoflush(1);
+
+    my @pkgs = get_pkgs();
+
+    require Mojo::JSON;
+    Mojo::JSON->import( qw< encode_json> );
+    require Path::Tiny;
+
+    # Write matrix (JSON) of all packages to a file for comparison
+    {
+        my $matrix = encode_json( \@pkgs );
+        my $FNAME  = './packages.txt';
+
+        if ($dry_run) {
+            print <<~"END";
+                File ($FNAME):
+                  $matrix
+
+                END
+        }
+        else {
+            Path::Tiny::path($FNAME)->spew_utf8("$matrix\n");
+        }
+    }
+
+    my @split_pkgs;
+    {
+        my $MAX_JOBS = 256;
+
+        push @split_pkgs, [ splice @pkgs, 0, $MAX_JOBS ] while @pkgs;
+
+        if ($verbose) {
+            print "Split packages ($MAX_JOBS max jobs):\n";
+            p @split_pkgs;
+            print "\n";
+        }
+    }
+
+    my $cnt = 0;
+    foreach my $workflow (@split_pkgs) {
+        ++$cnt;
+
+        my $pkgs  = encode_json($workflow);
+        my $templ = $TEMPLATE =~ s{^name: 'aur_bump_\KN}{$cnt}mr
+          =~ s{^ +packages: \K$}{'$pkgs'}mr;
+
+        my $FNAME = "./.github/workflows/aur_bump_$cnt.yml";
+
+        if ($dry_run) {
+            $templ = $templ =~ s{^}{  }mgr;
+
+            print <<~"END";
+                File ($FNAME):
+                $templ
+                END
+        }
+        else {
+            Path::Tiny::path($FNAME)->spew_utf8($templ);
+        }
+    }
+}
+
+sub get_pkgs ()
+{
+    my $agent    = "$maintainer/aur_bump";
+    my $endpoint = "https://aur.archlinux.org/rpc/v5/search/$maintainer?by=maintainer";
+
+    require Mojo::UserAgent;
+
+    my $ua = Mojo::UserAgent->new;
+    $ua->transactor->name($agent);
+
+    # Request JSON
+    my $res = do {
+        try {
+            $ua->get($endpoint)->result;
+        }
+        catch ($e) {
+            warn $e;
+            undef;
+        }
+    };
+
+    my $msg = "failed to request $endpoint";
+
+    _err($msg) unless defined $res;
+
+    if ( !$res->is_success ) {
+        $res->is_error
+          ? _err( "$msg: " . $res->message )
+          : _err($msg);
+    }
+
+    # Decode JSON
+    my $json = do {
+        try {
+            $res->json;
+        }
+        catch ($e) {
+            warn $e;
+            undef;
+        }
+    };
+
+    _err("failed to decode $endpoint")
+      unless defined $json;
+
+    _err("no packages found from $maintainer")
+      unless scalar $json->{results}->@*;
+
+    my @pkgs;
+    foreach my $pkg ( $json->{results}->@* ) {
+        push @pkgs, $pkg->{Name}
+          if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs
+    }
+
+    if ($verbose) {
+        my $pkgs_cnt = scalar @pkgs;
+
+        print <<~"END";
+            Maintainer: $maintainer
+            Found packages ($pkgs_cnt):
+            END
+
+        p @pkgs;
+        print "\n";
+    }
+
+    return @pkgs;
+}
+
+sub _err ($msg)
+{
+    warn "$prog: $msg\n";
+    exit 1;
+}
+
+process_opts();
+update_workflows();
+
+=encoding UTF-8
+
+=head1 NAME
+
+update_workflows - generate aur_bump workflow files
+
+=head1 SYNOPSIS
+
+B<update_workflows> I<MAINTAINER>
+
+Options:
+
+      --dry-run print but do not execute commands
+  -h, --help    show this help and exit
+  -v, --verbose more output info
+  -V, --version show version info and exit
+
+Examples:
+
+  $ update_workflows ryoskzypu
+  $ update_workflows -v --dry-run ryoskzypu
+
+=head1 DESCRIPTION
+
+B<update_workflows> is a command-line utility which requests all AUR packages
+from specific maintainer, then write them to generated aur_bump workflow files
+in the current directory (aur_bump repo).
+
+=head2 RATIONALE
+
+GitHub workflows jobs are capped at 256, causing aur_bump to fail when the AUR
+maintainer owns more than 256 packages.
+
+=head2 NOTE
+
+This script is meant to be run manually whenever the maintainer creates or
+removes an AUR package. It will create/update the necessary files for aur_bump.
+
+The generated files are: one F<packages> file containing a JSON array string of
+all AUR packages, and one or more F<aur_bump_N> files.
+
+The I<N> means a count number which goes up when the maintainer packages exceed
+256, so the packages are split into F<aur_bump_N> files, each containing a
+maximum of 256 packages.
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--dry-run>
+
+Print commands that would be executed to C<STDERR>; do not run them. Default: C<false>.
+
+=item B<-h>, B<--help>
+
+Display a summary of options and exit.
+
+=item B<-v>, B<--verbose>
+
+Display more information to C<STDERR>. Default: C<false>.
+
+=item B<-V>, B<--version>
+
+Display the B<update_workflows> version number and exit.
+
+=back
+
+=head1 EXIT STATUS
+
+  0  success
+  1  general failure
+  2  command-line usage error
+
+=head1 BUGS
+
+Report bugs at L<https://github.com/ryoskzypu/aur_bump/issues>.
+
+=head1 AUTHOR
+
+ryoskzypu <ryoskzypu@proton.me>
+
+=head1 SEE ALSO
+
+=over 4
+
+=item *
+
+L<https://github.com/ryoskzypu/aur_bump>.
+
+=back
+
+=head1 COPYRIGHT
+
+Copyright © 2026 ryoskzypu
+
+MIT-0 License. See LICENSE for details.
+
+=cut

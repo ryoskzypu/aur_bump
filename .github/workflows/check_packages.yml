@@ -3,36 +3,18 @@ name: 'AUR package update checker'
 on:
   workflow_call:
     inputs:
-      filename:
-        description: 'Filename containing which AUR packages to check. Content of file must be JSON array.'
+      packages:
+        description: 'Which AUR packages to check. Value must be a JSON array (maximum of 256 packages)'
         type: string
         required: true
 
 jobs:
-  get-packages:
-    runs-on: ubuntu-latest
-
-    outputs:
-      packages: ${{ steps.read-file.outputs.packages }}
-
-    steps:
-      - uses: actions/checkout@v7
-      - name: 'Read packages from file'
-        id: read-file
-        env:
-          FILE: ${{ inputs.filename }}
-        shell: bash
-        run: |
-          printf '%s\n' "packages=$(< $FILE)" >> $GITHUB_OUTPUT
-
-
   check-packages:
-    needs: get-packages
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        package: ${{ fromJson(needs.get-packages.outputs.packages) }}
+        package: ${{ fromJson(inputs.packages) }}
 
       max-parallel: 3
 

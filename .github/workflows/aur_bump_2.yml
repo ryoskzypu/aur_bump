@@ -1,4 +1,4 @@
-name: 'AUR bump test'
+name: 'aur_bump_2 (AUR package update checker)'
 description: 'Call check_packages.yml weekly at midnight UTC'
 
 on:
@@ -8,11 +8,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  call-aur-bump-test:
+  call-check-packages:
     uses: ryoskzypu/aur_bump/.github/workflows/check_packages.yml@main
     with:
-      filename: 'packages'
-    # with:
-    #     packages: '["perl-algorithm-c3", "perl-algorithm-lcss", "perl-aliased", "perl-alien-gmp", "perl-apache-htpasswd", "perl-app-cmd"]'
+      packages: '["perl-xml-namespacefactory"]'
 
     secrets: inherit
