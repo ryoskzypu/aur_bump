@@ -36,6 +36,7 @@ my $TEMPLATE = <<~'END';
       call-check-packages:
         uses: ryoskzypu/aur_bump/.github/workflows/check_packages.yml@main
         with:
+          maintainer: 
           packages: 
 
         secrets: inherit
@@ -107,6 +108,7 @@ sub update_workflows ()
 
         my $pkgs  = encode_json($workflow);
         my $templ = $TEMPLATE =~ s{^name: 'aur_bump_\KN}{$cnt}mr
+          =~ s{^ +maintainer: \K$}{'$maintainer'}mr
           =~ s{^ +packages: \K$}{'$pkgs'}mr;
 
         my $FNAME = "./.github/workflows/aur_bump_$cnt.yml";

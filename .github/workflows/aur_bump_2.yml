@@ -11,6 +11,7 @@ jobs:
   call-check-packages:
     uses: ryoskzypu/aur_bump/.github/workflows/check_packages.yml@main
     with:
+      maintainer: 'ryoskzypu'
       packages: '["perl-xml-namespacefactory"]'
 
     secrets: inherit

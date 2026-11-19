@@ -3,12 +3,33 @@ name: 'AUR package update checker'
 on:
   workflow_call:
     inputs:
+      maintainer:
+        description: 'The AUR maintainer name'
+        type: string
+        required: true
+
       packages:
         description: 'Which AUR packages to check. Value must be a JSON array (maximum of 256 packages)'
         type: string
         required: true
 
 jobs:
+  show-info:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 'Display AUR maintainer packages'
+        env:
+          MAINTAINER: ${{ inputs.maintainer }}
+          PACKAGES: ${{ inputs.packages }}
+
+        shell: bash
+        run: |
+          printf '%s\n' \
+            "- Maintainer: $MAINTAINER" \
+            "- Packages: $PACKAGES" \
+            >> $GITHUB_STEP_SUMMARY
+
   check-packages:
     runs-on: ubuntu-latest
 
