@@ -5,18 +5,25 @@
 # https://gitlab.archlinux.org/archlinux/bumpbuddy/-/blob/master/checker.sh
 
 use v5.40.0;  # Current perl version from GH CI runner (Ubuntu 26.04 LTS)
+
 use strict;
 use warnings;
 
+use lib 'lib';
+use Utils qw<
+    add_job_summary
+    list_issue
+    view_issue
+    edit_issue
+    create_issue
+    close_issue
+>;
 use HTTP::Tiny;
 use JSON::PP   qw< decode_json >;
 use List::Util qw< any >;
 
-my $AGENT   = 'ryoskzypu/aur_bump';
-my $repo    = $ENV{GITHUB_REPOSITORY};
 my $package = $ENV{PACKAGE_NAME};
-
-my $CONFIG = '.nvchecker.toml';
+my $CONFIG  = '.nvchecker.toml';
 my $pkgbase;
 my $pkgver;
 my $upstream_url;
@@ -33,133 +40,6 @@ sub info ($msg)
     print "$pkgbase: $msg\n";
 }
 
-sub add_job_summary ($msg)
-{
-    my $fname = $ENV{GITHUB_STEP_SUMMARY} // '';
-
-    open my $fh, '>>', $fname
-      or die "Failed to append to $fname: $!";
-
-    print $fh "$msg\n";
-    close $fh or die $!;
-}
-
-sub list_issue (%opts)
-{
-    my ( $type, $search, $label ) = @opts{ qw< type search label > };
-
-    my @cmd = (
-        'gh',
-        'issue list',
-        '--repo',   $repo,
-        '--search', qq{"author:app/aur-bump-bot '$search' in:title"},
-        '--label',  qq{'$label'},
-        '--state',  'open',
-        '--limit',  '1',
-        '--json',   'number',
-        '--jq',     '.[].number',
-    );
-
-    chomp( my $issue_num = qx(@cmd) );
-
-    if ( $? == 0 ) {
-        return $issue_num;
-    }
-    else {
-        err("failed to check $type issue for $pkgbase");
-    }
-}
-
-sub view_issue ( $type, $issue_num )
-{
-    my @cmd = (
-        'gh',
-        'issue',
-        'view',
-        $issue_num,
-        '--repo', $repo,
-        '--json', 'body',
-        '--jq',   '.body',
-    );
-
-    chomp( my $issue = qx(@cmd) );
-
-    if ( $? == 0 ) {
-        return $issue;
-    }
-    else {
-        err("failed to request $type issue #$issue_num");
-    }
-}
-
-sub edit_issue (%opts)
-{
-    my ( $type, $issue_num, $title, $body ) = @opts{ qw< type issue title body > };
-
-    info("updating $type issue #$issue_num with new versions");
-
-    my @cmd = (
-        'gh',
-        'issue',
-        'edit',
-        $issue_num,
-        '--repo',  $repo,
-        '--title', $title,
-        '--body',  $body,
-    );
-
-    system(@cmd) == 0
-      or err("failed to update $type issue #$issue_num");
-
-    my $msg = "- Updated $type issue #$issue_num for $pkgbase";
-    add_job_summary($msg);
-}
-
-sub create_issue (%opts)
-{
-    my ( $type, $label, $title, $body ) = @opts{ qw< type label title body > };
-
-    info("creating $type issue");
-
-    my @cmd = (
-        'gh',
-        'issue',
-        'create',
-        '--repo',  $repo,
-        '--label', $label,
-        '--title', $title,
-        '--body',  $body,
-    );
-
-    system(@cmd) == 0
-      or err("failed to create $type issue");
-
-    my $msg = "- Created $type issue for $pkgbase";
-    add_job_summary($msg);
-}
-
-sub close_issue (%opts)
-{
-    my ( $type, $issue_num ) = @opts{ qw< type issue > };
-
-    info("closing existing issue #$issue_num");
-
-    my @cmd = (
-        'gh',
-        'issue',
-        'close',
-        $issue_num,
-        '--repo',    $repo,
-        '--comment', "Current version $pkgver is latest, closing the issue.",
-    );
-
-    system(@cmd) == 0
-      or err("failed to close $type issue #$issue_num");
-
-    my $msg = "- Closed $type issue #$issue_num for $pkgbase";
-    add_job_summary($msg);
-}
-
 sub update_or_create_issue (%opts)
 {
     my ( $type, $issue_num, $label, $title, $body, $upstream_version ) =
@@ -168,7 +48,7 @@ sub update_or_create_issue (%opts)
     if ( $issue_num ne '' ) {
         # Extract versions from existing issue type.
 
-        my $existing_body = view_issue( 'epoch', $issue_num );
+        my $existing_body = view_issue( 'epoch', $issue_num, $pkgbase );
 
         my ($existing_pkgver) = $existing_body =~ /^pkgver: ([^\n]+)$/m;
         err('failed to get existing pkgver version')
@@ -226,6 +106,7 @@ sub check_pkg_version ()
                 search => "$pkgbase - new version: ",
                 label  => 'package out-of-date',
                 upver  => $upstream_version,
+                target => $pkgbase,
             );
             $ood{issue} = list_issue(%ood);
 
@@ -235,6 +116,8 @@ sub check_pkg_version ()
                 search => "$pkgbase - version mismatch",
                 label  => 'package needs-epoch',
                 upver  => $upstream_version,
+                pkgver => $pkgver,
+                target => $pkgbase,
             );
             $epoch{issue} = list_issue(%epoch);
 
@@ -307,6 +190,7 @@ sub is_official_pkg ()
         type   => 'duplicate',
         search => "$pkgbase - exists in official repo",
         label  => 'package duplicate',
+        target => $pkgbase,
     );
     my $issue = list_issue(%dupe);
 
@@ -320,6 +204,7 @@ sub is_official_pkg ()
         exit 0;
     }
     else {
+        my $AGENT    = 'ryoskzypu/aur_bump';
         my $ENDPOINT = 'https://archlinux.org/api/v1/packages/search/';
 
         # https://en.wikipedia.org/wiki/Percent-encoding
