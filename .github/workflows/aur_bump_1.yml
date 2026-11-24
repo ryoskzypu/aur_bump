@@ -1,5 +1,5 @@
 name: 'aur_bump_1 (AUR package update checker)'
-description: 'Call check_packages.yml weekly at midnight UTC'
+description: 'Call check_packages.yml weekly at midnight UTC (Sunday)'
 
 on:
   schedule:

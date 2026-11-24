@@ -18,7 +18,13 @@ our @EXPORT_OK = qw<
 my $repo = $ENV{GITHUB_REPOSITORY};
 
 if ( !defined $repo ) {
-    warn "Repository name is not defined\n";
+    warn 'Repository name is not defined';
+    exit 1;
+}
+
+sub _err ($msg)
+{
+    warn "$msg\n";
     exit 1;
 }
 
@@ -55,8 +61,7 @@ sub list_issue (%opts)
         return $issue_num;
     }
     else {
-        warn "$target: failed to check $type issue for $target\n";
-        exit 1;
+        _err("$target: failed to check $type issue for $target");
     }
 }
 
@@ -78,8 +83,7 @@ sub view_issue ( $type, $issue_num, $target )
         return $issue;
     }
     else {
-        warn "$target: failed to request $type issue #$issue_num\n";
-        exit 1;
+        _err("$target: failed to request $type issue #$issue_num");
     }
 }
 
@@ -101,8 +105,7 @@ sub edit_issue (%opts)
 
     system(@cmd) == 0
       or do {
-          warn "$target: failed to update $type issue #$issue_num\n";
-          exit 1;
+          _err("$target: failed to update $type issue #$issue_num");
       };
 
     my $msg = "- Updated $type issue #$issue_num for $target";
@@ -127,8 +130,7 @@ sub create_issue (%opts)
 
     system(@cmd) == 0
       or do {
-          warn "$target: failed to create $type issue\n";
-          exit 1;
+          _err("$target: failed to create $type issue");
       };
 
     my $msg = "- Created $type issue for $target";
@@ -137,7 +139,7 @@ sub create_issue (%opts)
 
 sub close_issue (%opts)
 {
-    my ( $type, $issue_num, $pkgver, $target ) = @opts{ qw< type issue pkgver target > };
+    my ( $type, $issue_num, $comment, $target ) = @opts{ qw< type issue comment target > };
 
     print "$target: closing existing issue #$issue_num\n";
 
@@ -147,13 +149,12 @@ sub close_issue (%opts)
         'close',
         $issue_num,
         '--repo',    $repo,
-        '--comment', "Current version $pkgver is latest, closing the issue.",
+        '--comment', $comment,
     );
 
     system(@cmd) == 0
       or do {
-          warn "$target: failed to close $type issue #$issue_num\n";
-          exit 1;
+          _err("$target: failed to close $type issue #$issue_num");
       };
 
     my $msg = "- Closed $type issue #$issue_num for $target";

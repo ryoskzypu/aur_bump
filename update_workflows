@@ -6,6 +6,7 @@ use strict;
 use warnings;
 use open qw< :std :encoding(UTF-8) >;
 
+use lib 'lib';
 use File::Basename qw< basename >;
 use Getopt::Long   qw<
     :config
@@ -13,18 +14,22 @@ use Getopt::Long   qw<
     gnu_getopt
     no_ignore_case
 >;
-use Data::Printer;
+use Data::Printer fulldump => 1;
 
 our $VERSION = 'v1.0.0';
 
 my $prog = basename($0);
 my $maintainer;
+my $endpoint;
+my $compare;
+my $github;
 my $dry_run;
+my $force;
 my $verbose;
 
 my $TEMPLATE = <<~'END';
     name: 'aur_bump_N (AUR package update checker)'
-    description: 'Call check_packages.yml weekly at midnight UTC'
+    description: 'Call check_packages.yml weekly at midnight UTC (Sunday)'
 
     on:
       schedule:
@@ -45,8 +50,11 @@ my $TEMPLATE = <<~'END';
 sub process_opts ()
 {
     GetOptions(
-        'dry-run' => \$dry_run,
-        'h|help'  => sub {
+        'c|compare' => \$compare,
+        'github'    => \$github,
+        'dry-run'   => \$dry_run,
+        'force'     => \$force,
+        'h|help'    => sub {
             require Pod::Usage;
             Pod::Usage::pod2usage( -exitval => 0, -verbose => 0 );
         },
@@ -62,20 +70,20 @@ sub process_opts ()
 
 sub update_workflows ()
 {
-    # Print to STDERR by default (unbuffered)
+    # Print to STDERR by default
     select STDERR;
     STDERR->autoflush(1);
 
     my @pkgs = get_pkgs();
 
     require Mojo::JSON;
-    Mojo::JSON->import( qw< encode_json> );
+    Mojo::JSON->import( qw< encode_json decode_json > );
     require Path::Tiny;
 
-    # Write matrix (JSON) of all packages to a file for comparison
+    # Write matrix (JSON) of all maintainer packages to packages.txt for comparison.
     {
         my $matrix = encode_json( \@pkgs );
-        my $FNAME  = './packages.txt';
+        my $FNAME  = 'packages.txt';
 
         if ($dry_run) {
             print <<~"END";
@@ -84,8 +92,172 @@ sub update_workflows ()
 
                 END
         }
+        elsif ($compare) {
+            _err("file $FNAME does not exist")
+              unless -f $FNAME;
+
+            # Get the packages from packages.txt
+            my $file_pkgs;
+            {
+                my $file = Path::Tiny::path($FNAME)->slurp_utf8;
+
+                $file_pkgs = do {
+                    try {
+                        decode_json($file);
+                    }
+                    catch ($e) {
+                        warn $e;
+                        undef;
+                    }
+                };
+
+                _err("failed to decode $file")
+                  unless defined $file_pkgs;
+            }
+
+            require List::Compare;
+            my $lc = List::Compare->new( \@pkgs, $file_pkgs );
+
+            my %msg = (
+                eq => "$maintainer AUR packages and $FNAME are synchronized",
+                ne => "$maintainer AUR packages and $FNAME are different; run update_workflows to update $FNAME",
+            );
+
+            my sub print_pkgs_added ()
+            {
+                print "Packages added:\n";
+                p $lc->get_Lonly_ref;
+            }
+
+            my sub print_pkgs_removed ()
+            {
+                print "Packages removed\n";
+                p $lc->get_Ronly_ref;
+            }
+
+            if ( !$github ) {
+                if ( $lc->is_LequivalentR ) {
+                    print "$msg{eq}\n";
+                }
+                else {
+                    print "$msg{ne}\n";
+                    print "\n";
+                    print_pkgs_added();
+                    print "\n";
+                    print_pkgs_removed();
+                }
+
+                exit 0;
+            }
+
+            # GitHub
+
+            require Utils;
+            Utils->import(
+                qw<
+                    add_job_summary
+                    list_issue
+                    create_issue
+                    close_issue
+                >
+            );
+
+            my sub info ($msg) { print "$prog: $msg\n" }
+
+            # Check if package compare issue exists.
+            my %comp = (
+                type    => 'compare',
+                search  => "$prog - $FNAME is different",
+                label   => "$FNAME differs",
+                comment => "File $FNAME is up-to-date, closing the issue.",
+                target  => $prog,
+            );
+            $comp{issue} = list_issue(%comp);
+
+            if ( defined $comp{issue} && $comp{issue} ne '' ) {
+                my $msg = "issue #$comp{issue} exists";
+                $msg
+                  .= $lc->is_LequivalentR
+                  ? " and $FNAME is up-to-date"
+                  : " and $FNAME is still out-of-date";
+
+                my $summ = "- \u$comp{type} $msg";
+
+                info("$comp{type} $msg");
+                add_job_summary($summ);
+
+                # Close existing issue if packages.txt is in sync with AUR packages.
+                close_issue(%comp) if $lc->is_LequivalentR;
+            }
+            else {
+                if ( $lc->is_LequivalentR ) {
+                    my $summ = "- $msg{eq}";
+
+                    info( $msg{eq} );
+                    add_job_summary($summ);
+                }
+                # Create issue
+                else {
+                    my $added = '';
+                    if ( scalar $lc->get_Lonly ) {
+                        $added = join "\n", $lc->get_Lonly;
+                        $added = $added =~ s{^}{- }mgr;
+
+                        if ($verbose) {
+                            print_pkgs_added();
+                            print "\n";
+                        }
+                    }
+
+                    my $removed = '';
+                    if ( scalar $lc->get_Ronly ) {
+                        $removed = join "\n", $lc->get_Ronly;
+                        $removed = $removed =~ s{^}{- }mgr;
+
+                        if ($verbose) {
+                            print_pkgs_removed();
+                            print "\n";
+                        }
+                    }
+
+                    # GitHub issue template
+                    $comp{title} = $comp{search};
+                    $comp{body}  = <<~"END";
+                        maintainer: $maintainer
+                        endpoint: $endpoint
+                        filename: $FNAME
+
+                        ### Packages added
+
+                        $added
+
+                        ### Packages removed
+
+                        $removed
+
+                        > [!NOTE]
+                        > $msg{ne}
+                        END
+                    $comp{body} = $comp{body} =~ s{^#{3} Packages added\n{4}}{}mr   if $added eq '';
+                    $comp{body} = $comp{body} =~ s{^#{3} Packages removed\n{4}}{}mr if $removed eq '';
+
+                    my $summ = "- $msg{ne}";
+
+                    info( $msg{ne} );
+                    add_job_summary($summ);
+                    create_issue(%comp);
+                }
+            }
+
+            exit 0;
+        }
         else {
-            Path::Tiny::path($FNAME)->spew_utf8("$matrix\n");
+            if ( -f $FNAME && !$force ) {
+                warn "$prog: $FNAME file exists; use --force to overwrite it\n";
+            }
+            else {
+                Path::Tiny::path($FNAME)->spew_utf8("$matrix\n");
+            }
         }
     }
 
@@ -111,7 +283,7 @@ sub update_workflows ()
           =~ s{^ +maintainer: \K$}{'$maintainer'}mr
           =~ s{^ +packages: \K$}{'$pkgs'}mr;
 
-        my $FNAME = "./.github/workflows/aur_bump_$cnt.yml";
+        my $FNAME = ".github/workflows/aur_bump_$cnt.yml";
 
         if ($dry_run) {
             $templ = $templ =~ s{^}{  }mgr;
@@ -122,6 +294,11 @@ sub update_workflows ()
                 END
         }
         else {
+            if ( -f $FNAME && !$force ) {
+                warn "$prog: $FNAME file exists; use --force to overwrite it\n";
+                next;
+            }
+
             Path::Tiny::path($FNAME)->spew_utf8($templ);
         }
     }
@@ -129,8 +306,8 @@ sub update_workflows ()
 
 sub get_pkgs ()
 {
-    my $agent    = "$maintainer/aur_bump";
-    my $endpoint = "https://aur.archlinux.org/rpc/v5/search/$maintainer?by=maintainer";
+    my $agent = "$maintainer/aur_bump";
+    $endpoint = "https://aur.archlinux.org/rpc/v5/search/$maintainer?by=maintainer";
 
     require Mojo::UserAgent;
 
@@ -217,7 +394,10 @@ B<update_workflows> I<MAINTAINER>
 
 Options:
 
+  -c, --compare compare AUR packages with packages.txt and exit
+      --github  create or close a GH issue (requires --compare)
       --dry-run print but do not execute commands
+      --force   overwrite existing files
   -h, --help    show this help and exit
   -v, --verbose more output info
   -V, --version show version info and exit
@@ -254,9 +434,26 @@ maximum of 256 packages.
 
 =over 4
 
+=item B<-c>, B<--compare>
+
+Compare the maintainer AUR packages with F<packages.txt> and create a GitHub
+issue when they differ or close an existing issue when they are synchronized
+(requires B<--github>), then exit.
+
+=item B<--github>
+
+Create or close a GitHub issue according to L</"-c, --compare">. Requires B<--compare>.
+
+Note that this option is intended to only be used from a GitHub workflow since
+it relies on GitHub environment variables and secrets.
+
 =item B<--dry-run>
 
-Print commands that would be executed to C<STDERR>; do not run them. Default: C<false>.
+Print commands that would be executed to C<STDERR>; do not run them.
+
+=item B<--force>
+
+Overwrite existing files silently.
 
 =item B<-h>, B<--help>
 
@@ -264,7 +461,7 @@ Display a summary of options and exit.
 
 =item B<-v>, B<--verbose>
 
-Display more information to C<STDERR>. Default: C<false>.
+Display more information to C<STDERR>.
 
 =item B<-V>, B<--version>
 

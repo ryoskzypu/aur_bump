@@ -100,24 +100,27 @@ sub check_pkg_version ()
             err("failed to compare version $upstream_version against $pkgver")
               unless $? == 0;
 
+            my $comment = "Current version $pkgver is latest, closing the issue.";
+
             # Check if package out-of-date issue exists.
             my %ood = (
-                type   => 'out-of-date',
-                search => "$pkgbase - new version: ",
-                label  => 'package out-of-date',
-                upver  => $upstream_version,
-                target => $pkgbase,
+                type    => 'out-of-date',
+                search  => "$pkgbase - new version: ",
+                label   => 'package out-of-date',
+                upver   => $upstream_version,
+                comment => $comment,
+                target  => $pkgbase,
             );
             $ood{issue} = list_issue(%ood);
 
             # Check if package epoch issue exists.
             my %epoch = (
-                type   => 'epoch',
-                search => "$pkgbase - version mismatch",
-                label  => 'package needs-epoch',
-                upver  => $upstream_version,
-                pkgver => $pkgver,
-                target => $pkgbase,
+                type    => 'epoch',
+                search  => "$pkgbase - version mismatch",
+                label   => 'package needs-epoch',
+                upver   => $upstream_version,
+                comment => $comment,
+                target  => $pkgbase,
             );
             $epoch{issue} = list_issue(%epoch);
 

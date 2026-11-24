@@ -1,0 +1,35 @@
+name: 'Compare AUR packages'
+description: 'Compare maintainer AUR packages with packages.txt; weekly at midnight UTC (Saturday)'
+
+on:
+  schedule:
+    - cron: '0 0 * * Sat'
+
+  workflow_dispatch:
+
+jobs:
+  compare-packages:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 'Generate GitHub App token'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: 'Install update_workflows dependencies'
+        run: |
+          sudo apt update
+          sudo apt install -y libdata-printer-perl libmojolicious-perl libio-socket-ssl-perl libcpanel-json-xs-perl libpath-tiny-perl liblist-compare-perl
+
+      - uses: actions/checkout@v7
+      - name: 'Compare packages'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+        shell: bash
+        run: |
+          chmod +x update_workflows
+          ./update_workflows --compare --github --verbose ryoskzypu

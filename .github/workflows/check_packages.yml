@@ -48,7 +48,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: 'Install + cache apt dependencies'
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        uses: awalsh128/cache-apt-pkgs-action@v2
         with:
           packages: libio-socket-ssl-perl makepkg nvchecker
           version: 1.0
