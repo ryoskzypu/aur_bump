@@ -1,5 +1,5 @@
 name: 'aur_bump_2 (AUR package update checker)'
-description: 'Call check_packages.yml weekly at midnight UTC'
+description: 'Call check_packages.yml weekly at midnight UTC (Sunday)'
 
 on:
   schedule:
@@ -12,6 +12,6 @@ jobs:
     uses: ryoskzypu/aur_bump/.github/workflows/check_packages.yml@main
     with:
       maintainer: 'ryoskzypu'
-      packages: '["perl-xml-namespacefactory"]'
+      packages: '["perl-xml-namespace","perl-xml-namespacefactory"]'
 
     secrets: inherit
