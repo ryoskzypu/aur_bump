@@ -19,13 +19,15 @@ use Data::Printer fulldump => 1;
 our $VERSION = 'v1.0.0';
 
 my $prog = basename($0);
+my %opts = (
+    compare => undef,
+    github  => undef,
+    dry_run => undef,
+    force   => undef,
+    verbose => undef,
+);
 my $maintainer;
 my $endpoint;
-my $compare;
-my $github;
-my $dry_run;
-my $force;
-my $verbose;
 
 my $TEMPLATE = <<~'END';
     name: 'aur_bump_N (AUR package update checker)'
@@ -50,15 +52,15 @@ my $TEMPLATE = <<~'END';
 sub process_opts ()
 {
     GetOptions(
-        'c|compare' => \$compare,
-        'github'    => \$github,
-        'dry-run'   => \$dry_run,
-        'force'     => \$force,
+        'c|compare' => \$opts{compare},
+        'github'    => \$opts{github},
+        'dry-run'   => \$opts{dry_run},
+        'force'     => \$opts{force},
         'h|help'    => sub {
             require Pod::Usage;
             Pod::Usage::pod2usage( -exitval => 0, -verbose => 0 );
         },
-        'v|verbose' => \$verbose,
+        'v|verbose' => \$opts{verbose},
         'V|version' => sub { print "$prog $VERSION\n"; exit 0 },
     ) or exit 2;
 
@@ -85,14 +87,14 @@ sub update_workflows ()
         my $matrix = encode_json( \@pkgs );
         my $FNAME  = 'packages.txt';
 
-        if ($dry_run) {
+        if ( $opts{dry_run} ) {
             print <<~"END";
                 File ($FNAME):
                   $matrix
 
                 END
         }
-        elsif ($compare) {
+        elsif ( $opts{compare} ) {
             _err("file $FNAME does not exist")
               unless -f $FNAME;
 
@@ -135,7 +137,7 @@ sub update_workflows ()
                 p $lc->get_Ronly_ref;
             }
 
-            if ( !$github ) {
+            if ( !$opts{github} ) {
                 if ( $lc->is_LequivalentR ) {
                     print "$msg{eq}\n";
                 }
@@ -203,7 +205,7 @@ sub update_workflows ()
                         $added = join "\n", $lc->get_Lonly;
                         $added = $added =~ s{^}{- }mgr;
 
-                        if ($verbose) {
+                        if ( $opts{verbose} ) {
                             print_pkgs_added();
                             print "\n";
                         }
@@ -214,7 +216,7 @@ sub update_workflows ()
                         $removed = join "\n", $lc->get_Ronly;
                         $removed = $removed =~ s{^}{- }mgr;
 
-                        if ($verbose) {
+                        if ( $opts{verbose} ) {
                             print_pkgs_removed();
                             print "\n";
                         }
@@ -252,7 +254,7 @@ sub update_workflows ()
             exit 0;
         }
         else {
-            if ( -f $FNAME && !$force ) {
+            if ( -f $FNAME && !$opts{force} ) {
                 warn "$prog: $FNAME file exists; use --force to overwrite it\n";
             }
             else {
@@ -267,7 +269,7 @@ sub update_workflows ()
 
         push @split_pkgs, [ splice @pkgs, 0, $MAX_JOBS ] while @pkgs;
 
-        if ($verbose) {
+        if ( $opts{verbose} ) {
             print "Split packages ($MAX_JOBS max jobs):\n";
             p @split_pkgs;
             print "\n";
@@ -285,7 +287,7 @@ sub update_workflows ()
 
         my $FNAME = ".github/workflows/aur_bump_$cnt.yml";
 
-        if ($dry_run) {
+        if ( $opts{dry_run} ) {
             $templ = $templ =~ s{^}{  }mgr;
 
             print <<~"END";
@@ -294,7 +296,7 @@ sub update_workflows ()
                 END
         }
         else {
-            if ( -f $FNAME && !$force ) {
+            if ( -f $FNAME && !$opts{force} ) {
                 warn "$prog: $FNAME file exists; use --force to overwrite it\n";
                 next;
             }
@@ -358,7 +360,7 @@ sub get_pkgs ()
           if $pkg->{Name} !~ /-(?> bzr | cvs | darcs | git | hg | svn )\z/x;  # Exclude VCS pkgs
     }
 
-    if ($verbose) {
+    if ( $opts{verbose} ) {
         my $pkgs_cnt = scalar @pkgs;
 
         print <<~"END";
