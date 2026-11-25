@@ -386,11 +386,11 @@ update_workflows();
 
 =head1 NAME
 
-update_workflows - generate aur_bump workflow files
+update_workflows - generate aur_bump workflows
 
 =head1 SYNOPSIS
 
-B<update_workflows> I<MAINTAINER>
+B<update_workflows> [I<OPTION>]... I<MAINTAINER>
 
 Options:
 
@@ -410,21 +410,21 @@ Examples:
 =head1 DESCRIPTION
 
 B<update_workflows> is a command-line utility which requests all AUR packages
-from specific maintainer, then write them to generated aur_bump workflow files
-in the current directory (aur_bump repo).
+from a specific maintainer, then writes them to generated aur_bump workflow
+files in the current directory (aur_bump repo).
 
 =head2 RATIONALE
 
-GitHub workflows jobs are capped at 256, causing aur_bump to fail when the AUR
+GitHub workflows jobs are capped at 256, causing them to fail when the AUR
 maintainer owns more than 256 packages.
 
 =head2 NOTE
 
-This script is meant to be run manually whenever the maintainer creates or
+This script is intended to be run manually whenever the maintainer creates or
 removes an AUR package. It will create/update the necessary files for aur_bump.
 
-The generated files are: one F<packages> file containing a JSON array string of
-all AUR packages, and one or more F<aur_bump_N> files.
+The generated files are: a F<packages.txt> file containing a JSON array string
+of all AUR packages, and one or more F<aur_bump_N> files.
 
 The I<N> means a count number which goes up when the maintainer packages exceed
 256, so the packages are split into F<aur_bump_N> files, each containing a
@@ -489,7 +489,15 @@ ryoskzypu <ryoskzypu@proton.me>
 
 =item *
 
-L<https://github.com/ryoskzypu/aur_bump>.
+L<https://wiki.archlinux.org/title/Arch_User_Repository>
+
+=item *
+
+L<https://github.com/ryoskzypu/aur_bump>
+
+=item *
+
+L<https://docs.github.com/en/actions/reference/limits>
 
 =back
 
